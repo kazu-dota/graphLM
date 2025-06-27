@@ -1,0 +1,31 @@
+[project]
+name = "graphlm_backend"
+version = "0.1.0"
+description = "Backend for GraphLM application"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "llama-index",
+    "llama-index-embeddings-huggingface",
+    "llama-index-llms-openai", # Placeholder, will be replaced with actual LLM
+    "llama-index-vector-stores-chroma",
+    "llama-index-graph-stores-neo4j",
+    "python-dotenv",
+    "python-multipart", # For file uploads
+    "office365-rest-python-client", # For SharePoint integration
+]
+requires-python = ">=3.9"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["graphlm_backend*"]
+
+[tool.uvicorn.run]
+app = "main:app"
+host = "0.0.0.0"
+port = 8000
+reload = true
