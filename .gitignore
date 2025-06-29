@@ -30,3 +30,6 @@ yarn-error.log
 .DS_Store
 .Trashes
 Thumbs.db
+
+# Uploaded files
+uploaded_files/
