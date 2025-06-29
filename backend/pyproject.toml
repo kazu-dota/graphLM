@@ -8,7 +8,10 @@ dependencies = [
     "llama-index",
     "llama-index-embeddings-huggingface",
     "llama-index-llms-openai", # Placeholder, will be replaced with actual LLM
-    "llama-index-vector-stores-chroma",
+    "llama-index-readers-file",
+    "ipython",
+    "beautifulsoup4",
+    "html-text",
     "llama-index-graph-stores-neo4j",
     "python-dotenv",
     "python-multipart", # For file uploads
