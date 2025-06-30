@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Typography, TextField, Button, Paper, CircularProgress, List, ListItem, ListItemText, Divider } from '@mui/material';
 import { chatWithBot } from '../utils/api';
 

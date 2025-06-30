@@ -1,12 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppBar, Toolbar, Typography, Container, Box, Button, Grid } from '@mui/material';
-import ChatbotList from '../components/ChatbotList';
+import ChatbotList, { ChatbotStatus } from '../components/ChatbotList';
 import ChatbotCreationForm from '../components/ChatbotCreationForm';
 import ChatInterface from '../components/ChatInterface';
+
+interface Chatbot {
+  id: string;
+  name: string;
+  description?: string;
+  status: ChatbotStatus;
+  total_nodes?: number;
+  processed_nodes?: number;
+  current_step?: string; // IndexingStep is string enum
+}
 
 const Home: React.FC = () => {
   const [refreshChatbotList, setRefreshChatbotList] = useState(false);
   const [selectedChatbotId, setSelectedChatbotId] = useState<string | null>(null);
+  const [chatbots, setChatbots] = useState<Chatbot[]>([]); // Add state for chatbots
+  const [selectedChatbotStatus, setSelectedChatbotStatus] = useState<ChatbotStatus>(ChatbotStatus.READY); // Add state for selected chatbot status
 
   const handleChatbotCreated = () => {
     setRefreshChatbotList(prev => !prev);
@@ -15,6 +27,16 @@ const Home: React.FC = () => {
   const handleChatbotSelect = (chatbotId: string) => {
     setSelectedChatbotId(chatbotId);
   };
+
+  // Update selected chatbot status when selectedChatbotId or chatbots list changes
+  useEffect(() => {
+    if (selectedChatbotId) {
+      const currentChatbot = chatbots.find(bot => bot.id === selectedChatbotId);
+      if (currentChatbot) {
+        setSelectedChatbotStatus(currentChatbot.status);
+      }
+    }
+  }, [selectedChatbotId, chatbots]);
 
   return (
     <Box sx={{ flexGrow: 1 }}>
@@ -35,12 +57,13 @@ const Home: React.FC = () => {
                 refresh={refreshChatbotList} 
                 onChatbotSelect={handleChatbotSelect} 
                 selectedChatbotId={selectedChatbotId} 
+                onChatbotsLoaded={setChatbots} // Pass callback to update chatbots state
               />
             </Box>
           </Grid>
           <Grid item xs={12} md={8}>
             {selectedChatbotId ? (
-              <ChatInterface chatbotId={selectedChatbotId} />
+              <ChatInterface chatbotId={selectedChatbotId} chatbotStatus={selectedChatbotStatus} />
             ) : (
               <Box sx={{ textAlign: 'center', mt: 10 }}>
                 <Typography variant="h6">Select a chatbot to start chatting</Typography>

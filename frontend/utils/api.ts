@@ -54,12 +54,12 @@ export const fetchChatbots = async () => {
   }
 };
 
-export const getChatbotStatus = async (chatbotId: string) => {
+export const getIndexingProgress = async (chatbotId: string) => {
   try {
-    const response = await api.get(`/api/chatbots/${chatbotId}/status`);
+    const response = await api.get(`/api/chatbots/${chatbotId}/indexing_progress`);
     return response.data;
   } catch (error) {
-    console.error(`Error fetching status for chatbot ${chatbotId}:`, error);
+    console.error(`Error fetching indexing progress for chatbot ${chatbotId}:`, error);
     throw error;
   }
 };
