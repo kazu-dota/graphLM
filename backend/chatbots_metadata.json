@@ -1,24 +1,6 @@
 {
-    "cbd1376a-6ef3-42cd-b212-3faf8dc650c5": {
-        "id": "cbd1376a-6ef3-42cd-b212-3faf8dc650c5",
-        "name": "test",
-        "description": null,
-        "status": "READY",
-        "total_nodes": 0,
-        "processed_nodes": 0,
-        "current_step": null
-    },
-    "b00861e9-ffb5-4008-876f-7191c9bf96c5": {
-        "id": "b00861e9-ffb5-4008-876f-7191c9bf96c5",
-        "name": "テスト",
-        "description": null,
-        "status": "READY",
-        "total_nodes": 0,
-        "processed_nodes": 0,
-        "current_step": null
-    },
-    "a1a19602-9a53-4756-b599-b3015bad9f29": {
-        "id": "a1a19602-9a53-4756-b599-b3015bad9f29",
+    "a9ce9297-a6a0-4aa1-b83e-6216c230c62d": {
+        "id": "a9ce9297-a6a0-4aa1-b83e-6216c230c62d",
         "name": "テスト",
         "description": null,
         "status": "READY",
