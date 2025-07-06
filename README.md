@@ -21,6 +21,7 @@ GraphLM is a self-service GraphRAG chatbot building platform that allows employe
     ```
 3.  Run the FastAPI application:
     ```bash
+    .venv\Scripts\Activate.ps1
     uvicorn main:app --reload
     ```
     The backend will be accessible at `http://localhost:8000`.
