@@ -86,6 +86,7 @@ class Source(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     sources: List[Source]
+    graph_data: Optional[Dict] = None
 
 class IndexingProgressResponse(BaseModel):
     total_nodes: int
@@ -148,7 +149,7 @@ def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
 
         query_engine = index.as_query_engine(
             include_text=True,
-            response_mode="tree_summarize",
+            response_mode="compact",
             embedding_mode="hybrid",
             similarity_top_k=5,
         )
@@ -204,7 +205,7 @@ def build_knowledge_graph(chatbot_id: str):
 
         query_engine = index.as_query_engine(
             include_text=True,
-            response_mode="tree_summarize",
+            response_mode="compact",
             embedding_mode="hybrid",
             similarity_top_k=5,
         )
@@ -314,7 +315,149 @@ async def chat_with_bot(request: ChatRequest):
     try:
         response = await query_engine.aquery(request.query)
         sources = [Source(document_name=node.metadata.get('file_name', 'Unknown'), page_number=node.metadata.get('page_label'), snippet=node.get_content(metadata_mode="all")) for node in response.source_nodes]
-        return ChatResponse(response=str(response), sources=sources)
+        
+        # NEW: Extract graph data from response metadata and format for frontend
+        formatted_graph_data = None
+        raw_kg_rel_map = None
+
+        logger.info(f"DEBUG: Full response.metadata: {response.metadata}")
+
+        # Iterate through metadata values to find kg_rel_map
+        for key, value in response.metadata.items():
+            if isinstance(value, dict) and "kg_rel_map" in value:
+                raw_kg_rel_map = value["kg_rel_map"]
+                logger.info(f"DEBUG: Found raw_kg_rel_map under key {key}: {raw_kg_rel_map}")
+                break # Found it, no need to continue searching
+
+        if raw_kg_rel_map:
+            nodes_set = set() # Use a set to store unique node IDs
+            links = []
+
+            for subject, triplets in raw_kg_rel_map.items():
+                nodes_set.add(subject)
+                for triplet in triplets:
+                    # Triplet is typically [relation, object]
+                    if len(triplet) == 2:
+                        relation, obj = triplet
+                        nodes_set.add(obj)
+                        links.append({"source": subject, "target": obj, "label": relation})
+                    # Handle cases where triplet might be (subject, relation, object) if it ever occurs
+                    elif len(triplet) == 3:
+                        s, relation, o = triplet
+                        nodes_set.add(s)
+                        nodes_set.add(o)
+                        links.append({"source": s, "target": o, "label": relation})
+            
+            formatted_graph_data = {
+                "nodes": [{"id": node, "label": node} for node in nodes_set],
+                "links": links
+            }
+            logger.info(f"DEBUG: Formatted graph data: {formatted_graph_data}")
+        else:
+            logger.info("DEBUG: raw_kg_rel_map was not found or was empty.")
+        
+        logger.info(f"Received chat request for chatbot {request.chatbot_id} with query: {request.query}")
+        response = await query_engine.aquery(request.query)
+        logger.info(f"Query engine response received. Type: {type(response)}, Content: {str(response)[:200]}...")
+        sources = [Source(document_name=node.metadata.get('file_name', 'Unknown'), page_number=node.metadata.get('page_label'), snippet=node.get_content(metadata_mode="all")) for node in response.source_nodes]
+        
+        # NEW: Extract graph data from response metadata and format for frontend
+        formatted_graph_data = None
+        raw_kg_rel_map = None
+
+        logger.info(f"DEBUG: Full response.metadata: {response.metadata}")
+
+        # Iterate through metadata values to find kg_rel_map
+        for key, value in response.metadata.items():
+            if isinstance(value, dict) and "kg_rel_map" in value:
+                raw_kg_rel_map = value["kg_rel_map"]
+                logger.info(f"DEBUG: Found raw_kg_rel_map under key {key}: {raw_kg_rel_map}")
+                break # Found it, no need to continue searching
+
+        if raw_kg_rel_map:
+            nodes_set = set() # Use a set to store unique node IDs
+            links = []
+
+            for subject, triplets in raw_kg_rel_map.items():
+                nodes_set.add(subject)
+                for triplet in triplets:
+                    # Triplet is typically [relation, object]
+                    if len(triplet) == 2:
+                        relation, obj = triplet
+                        nodes_set.add(obj)
+                        links.append({"source": subject, "target": obj, "label": relation})
+                    # Handle cases where triplet might be (subject, relation, object) if it ever occurs
+                    elif len(triplet) == 3:
+                        s, relation, o = triplet
+                        nodes_set.add(s)
+                        nodes_set.add(o)
+                        links.append({"source": s, "target": o, "label": relation})
+            
+            formatted_graph_data = {
+                "nodes": [{"id": node, "label": node} for node in nodes_set],
+                "links": links
+            }
+            logger.info(f"DEBUG: Formatted graph data: {formatted_graph_data}")
+        else:
+            logger.info("DEBUG: raw_kg_rel_map was not found or was empty.")
+        
+        return ChatResponse(response=str(response), sources=sources, graph_data=formatted_graph_data)
     except Exception as e:
         logger.error(f"Error during query for chatbot {request.chatbot_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="An error occurred while querying the chatbot.")
+
+@app.get("/api/chatbots/{chatbot_id}/graph")
+def get_graph_data(chatbot_id: str):
+    """Fetches the entire knowledge graph data from Neo4j for a specific chatbot."""
+    if chatbot_id not in chatbots_db:
+        raise HTTPException(status_code=404, detail="Chatbot not found")
+
+    logger.info(f"Fetching graph data for chatbot_id: {chatbot_id}")
+    try:
+        graph_store = Neo4jGraphStore(
+            username=NEO4J_USERNAME,
+            password=NEO4J_PASSWORD,
+            url=NEO4J_URI,
+            database="neo4j",
+        )
+
+        # More robust Cypher query to get exactly what we need for visualization
+        query = """
+        MATCH (n:Entity)-[r]->(m:Entity)
+        RETURN 
+            id(n) AS source_id, n.id AS source_label, 
+            id(m) AS target_id, m.id AS target_label, 
+            type(r) AS rel_type
+        """
+        
+        result = graph_store.query(query)
+
+        nodes = {}  # Use a dict to de-duplicate nodes
+        edges = []
+        if result:
+            for record in result:
+                source_id = record.get('source_id')
+                source_label = record.get('source_label')
+                target_id = record.get('target_id')
+                target_label = record.get('target_label')
+                rel_type = record.get('rel_type')
+
+                if source_id and source_label:
+                    nodes[source_id] = {"id": source_id, "label": source_label}
+                if target_id and target_label:
+                    nodes[target_id] = {"id": target_id, "label": target_label}
+                
+                if source_id and target_id and rel_type:
+                    edges.append({
+                        "source": source_id,
+                        "target": target_id,
+                        "label": rel_type
+                    })
+
+        nodes_list = list(nodes.values())
+
+        return {"nodes": nodes_list, "links": edges} # Return "links" for react-force-graph
+
+    except Exception as e:
+        logger.error(f"Error fetching graph data for chatbot {chatbot_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An error occurred while fetching graph data.")

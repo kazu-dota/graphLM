@@ -73,3 +73,13 @@ export const chatWithBot = async (chatbotId: string, query: string) => {
     throw error;
   }
 };
+
+export const getGraphData = async (chatbotId: string) => {
+  try {
+    const response = await api.get(`/api/chatbots/${chatbotId}/graph`);
+    return response.data;
+  } catch (error) {
+    console.error(`Error fetching graph data for chatbot ${chatbotId}:`, error);
+    throw error;
+  }
+};
