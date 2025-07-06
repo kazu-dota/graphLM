@@ -7,5 +7,14 @@
         "total_nodes": 0,
         "processed_nodes": 0,
         "current_step": null
+    },
+    "25392803-3f93-4bf1-818d-120bcd566852": {
+        "id": "25392803-3f93-4bf1-818d-120bcd566852",
+        "name": "202507--",
+        "description": null,
+        "status": "INDEXING",
+        "total_nodes": 0,
+        "processed_nodes": 0,
+        "current_step": "Loading Documents"
     }
 }

@@ -4,7 +4,8 @@ import GraphPanel from '../components/GraphPanel'; // Import the new GraphPanel
 import dynamic from 'next/dynamic';
 import { getGraphData } from '../utils/api';
 import { ChatbotStatus } from '../components/ChatbotList'; // Import ChatbotStatus
-import { Box, AppBar, Toolbar, Typography, Container, Grid, Paper } from '@mui/material'; // Import Material-UI components
+import { Box, AppBar, Toolbar, Typography, Container, Grid, Paper, Accordion, AccordionSummary, AccordionDetails, Card } from '@mui/material'; // Import Material-UI components
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ChatbotCreationForm from '../components/ChatbotCreationForm'; // Import ChatbotCreationForm
 import ChatbotList from '../components/ChatbotList'; // Import ChatbotList
 
@@ -93,38 +94,63 @@ const Home: React.FC = () => {
       <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
         <Grid container spacing={3}>
           <Grid item xs={12} md={4} lg={3}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              <ChatbotCreationForm onChatbotCreated={handleChatbotCreated} />
+            <Paper sx={{ p: 2 }}>
+              <Typography variant="h6" gutterBottom>
+                Management
+              </Typography>
+              <Accordion>
+                <AccordionSummary
+                  expandIcon={<ExpandMoreIcon />}
+                  aria-controls="panel1a-content"
+                  id="panel1a-header"
+                >
+                  <Typography>Create New Chatbot</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <ChatbotCreationForm onChatbotCreated={handleChatbotCreated} />
+                </AccordionDetails>
+              </Accordion>
               <ChatbotList 
                 refresh={refreshChatbotList} 
                 onChatbotSelect={handleChatbotSelect} 
                 selectedChatbotId={selectedChatbotId} 
                 onChatbotsLoaded={setChatbots}
               />
-            </Box>
+            </Paper>
           </Grid>
           <Grid item xs={12} md={8} lg={9}>
             {selectedChatbotId ? (
-              <Grid container spacing={2}>
+              <Grid container spacing={3}>
                 <Grid item xs={12} lg={6}>
-                  <ChatInterface 
-                    chatbotId={selectedChatbotId} 
-                    chatbotStatus={selectedChatbotStatus} 
-                    onReferenceGraphData={handleReferenceGraphData} // Pass the new handler
-                  />
+                  <Card sx={{ height: '100%' }}>
+                    <ChatInterface 
+                      chatbotId={selectedChatbotId} 
+                      chatbotStatus={selectedChatbotStatus} 
+                      onReferenceGraphData={handleReferenceGraphData} // Pass the new handler
+                    />
+                  </Card>
                 </Grid>
                 <Grid item xs={12} lg={6}>
-                  <GraphPanel 
-                    mainGraphData={mainGraphData} 
-                    isMainGraphLoading={isGraphLoading} 
-                    referenceGraphData={referenceGraphData} 
-                  />
+                  <Card sx={{ height: '100%' }}>
+                    <GraphPanel 
+                      mainGraphData={mainGraphData} 
+                      isMainGraphLoading={isGraphLoading} 
+                      referenceGraphData={referenceGraphData} 
+                    />
+                  </Card>
                 </Grid>
               </Grid>
             ) : (
-              <Paper sx={{ textAlign: 'center', p: 10 }}>
-                <Typography variant="h6">Select a chatbot to get started</Typography>
-                <Typography variant="body1">Once you select a chatbot, you can start a conversation and view its knowledge graph here.</Typography>
+              <Paper sx={{ textAlign: 'center', p: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                <Typography variant="h4" gutterBottom>
+                  Welcome to GraphLM
+                </Typography>
+                <Typography variant="subtitle1">
+                  Select a chatbot from the list on the left to start a conversation.
+                </Typography>
+                <Typography variant="body1" sx={{ mt: 2 }}>
+                  Or, create a new chatbot to begin building your own knowledge graph.
+                </Typography>
               </Paper>
             )}
           </Grid>
