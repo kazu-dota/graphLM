@@ -115,15 +115,6 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
 
   const getStatusChip = (chatbot: Chatbot) => {
     switch (chatbot.status) {
-      case ChatbotStatus.INDEXING:
-        const progress = chatbot.total_nodes && chatbot.total_nodes > 0 ? Math.round((chatbot.processed_nodes / chatbot.total_nodes) * 100) : 0;
-        return (
-          <Chip 
-            label={`Indexing: ${chatbot.current_step || 'Starting...'} (${chatbot.processed_nodes || 0}/${chatbot.total_nodes || 0} nodes - ${progress}%)`} 
-            color="warning" 
-            size="small" 
-          />
-        );
       case ChatbotStatus.READY:
         return <Chip label="Ready" color="success" size="small" />;
       case ChatbotStatus.FAILED:
@@ -149,6 +140,8 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
           <List>
             {chatbots.map((chatbot) => {
               const isIndexing = chatbot.status === ChatbotStatus.INDEXING;
+              const progress = chatbot.total_nodes && chatbot.total_nodes > 0 ? Math.round((chatbot.processed_nodes / chatbot.total_nodes) * 100) : 0;
+
               return (
                 <ListItemButton 
                   key={chatbot.id} 
@@ -159,10 +152,29 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
                 >
                   <ListItemText
                     primary={chatbot.name}
-                    secondary={chatbot.description || 'No description provided.'}
+                    secondary={
+                      <React.Fragment>
+                        <Typography
+                          sx={{ display: 'inline' }}
+                          component="span"
+                          variant="body2"
+                          color="text.primary"
+                        >
+                          {chatbot.description || 'No description provided.'}
+                        </Typography>
+                        {isIndexing && (
+                          <Box sx={{ width: '100%', mt: 1 }}>
+                            <LinearProgress variant="determinate" value={progress} />
+                            <Typography variant="caption" color="text.secondary">
+                              {chatbot.current_step || 'Starting...'}: {chatbot.processed_nodes || 0}/{chatbot.total_nodes || 0} nodes ({progress}%)
+                            </Typography>
+                          </Box>
+                        )}
+                      </React.Fragment>
+                    }
                   />
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    {getStatusChip(chatbot)}
+                    {!isIndexing && getStatusChip(chatbot)}
                     <Button
                       variant="contained"
                       component="label"

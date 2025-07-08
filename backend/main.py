@@ -107,11 +107,24 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 if not all([OPENAI_API_KEY, NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD]):
     raise ValueError("One or more required environment variables are not set.")
 
-Settings.llm = OpenAI(temperature=0, model="gpt-4-turbo", api_key=OPENAI_API_KEY)
+Settings.llm = OpenAI(temperature=0, model="gpt-4.1-nano-2025-04-14", api_key=OPENAI_API_KEY)
 Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 Settings.num_workers = 4
 
-# --- Helper Functions ---
+
+
+from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+
+# Langfuse Integration (New)
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
+
+if all([LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST]):
+    LlamaIndexInstrumentor().instrument()
+    logger.info("Langfuse OpenInference instrumentation initialized for LlamaIndex.")
+else:
+    logger.warning("Langfuse environment variables not fully set. Skipping Langfuse OpenInference integration.")
 def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
     """
     Initializes a query engine by loading an existing knowledge graph index

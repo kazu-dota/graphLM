@@ -1,10 +1,11 @@
 
 import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Box, Typography, Paper, List, ListItem, ListItemText, IconButton, LinearProgress, Button } from '@mui/material';
+import { Box, Typography, Paper, List, ListItem, ListItemText, IconButton, LinearProgress, Button, ListItemIcon } from '@mui/material';
 import { uploadKnowledgeSource } from '../utils/api';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import DeleteIcon from '@mui/icons-material/Delete';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 
 interface KnowledgeSourceUploadProps {
   chatbotId: string;
@@ -67,6 +68,9 @@ const KnowledgeSourceUpload: React.FC<KnowledgeSourceUploadProps> = ({ chatbotId
           <List>
             {uploadedFiles.map((file, index) => (
               <ListItem key={index} secondaryAction={<IconButton edge="end" aria-label="delete" onClick={() => removeFile(file)}><DeleteIcon /></IconButton>}>
+                <ListItemIcon>
+                  <InsertDriveFileIcon />
+                </ListItemIcon>
                 <ListItemText primary={file.name} secondary={`${(file.size / 1024).toFixed(2)} KB`} />
               </ListItem>
             ))}

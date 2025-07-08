@@ -16,6 +16,8 @@ dependencies = [
     "python-dotenv",
     "python-multipart", # For file uploads
     "office365-rest-python-client", # For SharePoint integration
+    "langfuse", # Added for LLM observability
+    "openinference-instrumentation-llama-index",
 ]
 requires-python = ">=3.9"
 

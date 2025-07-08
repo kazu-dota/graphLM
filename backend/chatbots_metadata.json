@@ -12,9 +12,18 @@
         "id": "25392803-3f93-4bf1-818d-120bcd566852",
         "name": "202507--",
         "description": null,
-        "status": "INDEXING",
+        "status": "FAILED",
         "total_nodes": 0,
         "processed_nodes": 0,
-        "current_step": "Loading Documents"
+        "current_step": null
+    },
+    "664803b5-cf07-439c-b172-45a25fb5e027": {
+        "id": "664803b5-cf07-439c-b172-45a25fb5e027",
+        "name": "kazu",
+        "description": null,
+        "status": "FAILED",
+        "total_nodes": 0,
+        "processed_nodes": 0,
+        "current_step": null
     }
 }

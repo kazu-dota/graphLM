@@ -64,9 +64,12 @@ const Home: React.FC = () => {
     }
   };
 
+  const [selectedMessage, setSelectedMessage] = useState<any | null>(null); // State for the selected message
+
   // New handler to receive reference graph data from ChatInterface
-  const handleReferenceGraphData = (graphData: GraphData | null) => {
+  const handleReferenceGraphData = (graphData: GraphData | null, message: any) => {
     setReferenceGraphData(graphData);
+    setSelectedMessage(message);
   };
 
   useEffect(() => {
@@ -120,26 +123,23 @@ const Home: React.FC = () => {
           </Grid>
           <Grid item xs={12} md={8} lg={9}>
             {selectedChatbotId ? (
-              <Grid container spacing={3}>
-                <Grid item xs={12} lg={6}>
-                  <Card sx={{ height: '100%' }}>
-                    <ChatInterface 
-                      chatbotId={selectedChatbotId} 
-                      chatbotStatus={selectedChatbotStatus} 
-                      onReferenceGraphData={handleReferenceGraphData} // Pass the new handler
-                    />
-                  </Card>
-                </Grid>
-                <Grid item xs={12} lg={6}>
-                  <Card sx={{ height: '100%' }}>
-                    <GraphPanel 
-                      mainGraphData={mainGraphData} 
-                      isMainGraphLoading={isGraphLoading} 
-                      referenceGraphData={referenceGraphData} 
-                    />
-                  </Card>
-                </Grid>
-              </Grid>
+              <Box sx={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 128px)', gap: 3 }}>
+                <Box sx={{ flex: '5 1 0%' }}>
+                  <ChatInterface 
+                    chatbotId={selectedChatbotId} 
+                    chatbotStatus={selectedChatbotStatus} 
+                    onReferenceDataChange={handleReferenceGraphData} // Pass the new handler
+                  />
+                </Box>
+                <Box sx={{ flex: '0.5 1 0%' }}>
+                  <GraphPanel 
+                    mainGraphData={mainGraphData} 
+                    isMainGraphLoading={isGraphLoading} 
+                    referenceGraphData={referenceGraphData} 
+                    selectedMessage={selectedMessage}
+                  />
+                </Box>
+              </Box>
             ) : (
               <Paper sx={{ textAlign: 'center', p: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
                 <Typography variant="h4" gutterBottom>
