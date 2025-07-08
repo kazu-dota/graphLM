@@ -117,7 +117,7 @@ const GraphView: React.FC<GraphViewProps> = ({ graphData, highlightedNodes: prop
           // Use getNodeColor for consistent coloring
           let color = getNodeColor(node.label || '');
           if (isPropHighlighted) {
-            color = 'red';
+            color = 'red'; // Highlight color for hovered nodes
           }
 
           // Draw circle

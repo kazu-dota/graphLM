@@ -38,6 +38,7 @@ const Home: React.FC = () => {
   const [mainGraphData, setMainGraphData] = useState<GraphData | null>(null);
   const [isGraphLoading, setIsGraphLoading] = useState(false);
   const [referenceGraphData, setReferenceGraphData] = useState<GraphData | null>(null); // New state for reference graph
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 
   const handleChatbotCreated = () => {
     setRefreshChatbotList(prev => !prev);
@@ -124,19 +125,21 @@ const Home: React.FC = () => {
           <Grid item xs={12} md={8} lg={9}>
             {selectedChatbotId ? (
               <Box sx={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 128px)', gap: 3 }}>
-                <Box sx={{ flex: '5 1 0%' }}>
+                <Box sx={{ flex: '1 1 auto', minHeight: '200px', resize: 'vertical', overflow: 'auto', border: '1px solid #ccc', p: 1 }}>
                   <ChatInterface 
                     chatbotId={selectedChatbotId} 
                     chatbotStatus={selectedChatbotStatus} 
                     onReferenceDataChange={handleReferenceGraphData} // Pass the new handler
+                    onSourceHover={setHoveredNodeId} // Pass the hover handler
                   />
                 </Box>
-                <Box sx={{ flex: '0.5 1 0%' }}>
+                <Box sx={{ flex: '1 1 auto', minHeight: '200px', resize: 'vertical', overflow: 'auto', border: '1px solid #ccc', p: 1 }}>
                   <GraphPanel 
                     mainGraphData={mainGraphData} 
                     isMainGraphLoading={isGraphLoading} 
                     referenceGraphData={referenceGraphData} 
                     selectedMessage={selectedMessage}
+                    hoveredNodeId={hoveredNodeId} // Pass the hovered node ID
                   />
                 </Box>
               </Box>

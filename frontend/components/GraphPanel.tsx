@@ -17,9 +17,10 @@ interface GraphPanelProps {
   isMainGraphLoading: boolean;
   referenceGraphData: GraphData | null;
   selectedMessage: any | null; // Receive the selected message
+  hoveredNodeId: string | null; // New prop for hovered node
 }
 
-const GraphPanel: React.FC<GraphPanelProps> = ({ mainGraphData, isMainGraphLoading, referenceGraphData, selectedMessage }) => {
+const GraphPanel: React.FC<GraphPanelProps> = ({ mainGraphData, isMainGraphLoading, referenceGraphData, selectedMessage, hoveredNodeId }) => {
   const [selectedTab, setSelectedTab] = useState(0);
 
   const handleChangeTab = (event: React.SyntheticEvent, newValue: number) => {
@@ -65,7 +66,7 @@ const GraphPanel: React.FC<GraphPanelProps> = ({ mainGraphData, isMainGraphLoadi
                   <CircularProgress />
                 </Box>
               ) : (
-                <GraphView graphData={mainGraphData} highlightedNodes={highlightedNodes} />
+                <GraphView graphData={mainGraphData} highlightedNodes={hoveredNodeId ? new Set([hoveredNodeId]) : new Set()} />
               )}
             </Box>
           )}

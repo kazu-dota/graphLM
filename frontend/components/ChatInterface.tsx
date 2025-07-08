@@ -16,9 +16,10 @@ interface ChatInterfaceProps {
   chatbotId: string;
   chatbotStatus: ChatbotStatus;
   onReferenceDataChange: (graphData: any, message: Message | null) => void;
+  onSourceHover: (nodeId: string | null) => void; // New prop for hover events
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus, onReferenceDataChange }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus, onReferenceDataChange, onSourceHover }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -170,7 +171,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
                     </Typography>
                     <List dense>
                       {msg.sources.filter(source => source.document_name).map((source, i) => (
-                        <ListItem key={i} sx={{ pl: 0 }}>
+                        <ListItem 
+                          key={i} 
+                          sx={{ pl: 0 }} 
+                          onMouseEnter={() => onSourceHover(source.document_name)} 
+                          onMouseLeave={() => onSourceHover(null)}
+                        >
                           <ListItemText
                             primary={source.document_name}
                             secondary={`Page: ${source.page_number || 'N/A'}`}
