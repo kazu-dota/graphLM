@@ -44,55 +44,81 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
       text: input,
     };
 
-    const pendingBotMessageId = Date.now() + 1;
-    const pendingBotMessage: Message = {
-      id: pendingBotMessageId,
+    const botMessageId = Date.now() + 1;
+    const botMessage: Message = {
+      id: botMessageId,
       sender: 'bot',
-      text: '...', // Placeholder text
+      text: '', // Start with empty text
+      sources: [],
+      graphData: null,
       status: 'pending',
     };
-    
-    // Add both user message and pending bot message
-    setMessages(prev => [...prev, userMessage, pendingBotMessage]);
+
+    setMessages(prev => [...prev, userMessage, botMessage]);
     
     const currentInput = input;
     setInput('');
     setLoading(true);
 
-    try {
-      const response = await chatWithBot(chatbotId, currentInput);
-      const completedBotMessage: Message = {
-        id: pendingBotMessageId, // Use the same ID to update the pending message
-        sender: 'bot',
-        text: response.response,
-        sources: response.sources,
-        graphData: response.graph_data,
-        status: 'completed',
-      };
-      
-      // Update the pending bot message with the completed one
-      setMessages(prev => prev.map(msg => 
-        msg.id === pendingBotMessageId ? completedBotMessage : msg
-      ));
-      setSelectedMessage(completedBotMessage);
-      onReferenceDataChange(completedBotMessage.graphData, completedBotMessage);
+    const handleStreamEvent = (event: any) => {
+      if (event.error) {
+        setMessages(prev => prev.map(msg => 
+          msg.id === botMessageId 
+            ? { ...msg, text: `Error: ${event.error}`, status: 'error' } 
+            : msg
+        ));
+        setLoading(false);
+        return;
+      }
 
+      switch (event.event) {
+        case 'message':
+          setMessages(prev => prev.map(msg => 
+            msg.id === botMessageId 
+              ? { ...msg, text: msg.text + event.data.text } 
+              : msg
+          ));
+          break;
+        case 'sources':
+          setMessages(prev => prev.map(msg => 
+            msg.id === botMessageId 
+              ? { ...msg, sources: event.data.sources } 
+              : msg
+          ));
+          break;
+        case 'graph':
+          setMessages(prev => prev.map(msg => {
+            if (msg.id === botMessageId) {
+              onReferenceDataChange(event.data, msg);
+              return { ...msg, graphData: event.data };
+            }
+            return msg;
+          }));
+          break;
+        case 'done':
+          setMessages(prev => prev.map(msg => {
+            if (msg.id === botMessageId) {
+              const finalMessage = { ...msg, status: 'completed' as const };
+              setSelectedMessage(finalMessage);
+              onReferenceDataChange(finalMessage.graphData, finalMessage);
+              return finalMessage;
+            }
+            return msg;
+          }));
+          setLoading(false);
+          break;
+      }
+    };
+
+    try {
+      await chatWithBot(chatbotId, currentInput, handleStreamEvent);
     } catch (error: any) {
-      const detail = error.response?.data?.detail || 'Sorry, something went wrong.';
-      const errorBotMessage: Message = {
-        id: pendingBotMessageId,
-        sender: 'bot',
-        text: `Error: ${detail}`,
-        status: 'error',
-      };
-      
-      // Update the pending bot message with the error one
+      const detail = error.toString() || 'Sorry, something went wrong.';
       setMessages(prev => prev.map(msg => 
-        msg.id === pendingBotMessageId ? errorBotMessage : msg
+        msg.id === botMessageId 
+          ? { ...msg, text: `Error: ${detail}`, status: 'error' } 
+          : msg
       ));
-      setSelectedMessage(errorBotMessage);
-      onReferenceDataChange(null, errorBotMessage);
-    } finally {
       setLoading(false);
     }
   };
@@ -136,7 +162,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
                     <CircularProgress size={16} sx={{ ml: 1 }} />
                   )}
                 </Typography>
-                {msg.sender === 'bot' && msg.sources && msg.sources.length > 0 && (
+                {msg.sender === 'bot' && msg.status === 'completed' && msg.sources && msg.sources.length > 0 && (
                   <Box sx={{ mt: 2 }}>
                     <Divider />
                     <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>

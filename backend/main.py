@@ -1,14 +1,18 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import shutil
 from dotenv import load_dotenv
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, AsyncGenerator
 import uuid
 import logging
 from enum import Enum
 import json
+import asyncio
+
+from llama_index.core.chat_engine.types import StreamingAgentChatResponse
 
 # LlamaIndex imports
 from llama_index.core import (
@@ -83,10 +87,15 @@ class Source(BaseModel):
     page_number: Optional[int] = None
     snippet: Optional[str] = None
 
+class StreamEvent(str, Enum):
+    MESSAGE = "message"
+    SOURCES = "sources"
+    GRAPH = "graph"
+    DONE = "done"
+
 class ChatResponse(BaseModel):
-    response: str
-    sources: List[Source]
-    graph_data: Optional[Dict] = None
+    event: StreamEvent
+    data: Dict
 
 class IndexingProgressResponse(BaseModel):
     total_nodes: int
@@ -120,11 +129,11 @@ LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
 
-if all([LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST]):
-    LlamaIndexInstrumentor().instrument()
-    logger.info("Langfuse OpenInference instrumentation initialized for LlamaIndex.")
-else:
-    logger.warning("Langfuse environment variables not fully set. Skipping Langfuse OpenInference integration.")
+# if all([LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST]):
+#     LlamaIndexInstrumentor().instrument()
+#     logger.info("Langfuse OpenInference instrumentation initialized for LlamaIndex.")
+# else:
+#     logger.warning("Langfuse environment variables not fully set. Skipping Langfuse OpenInference integration.")
 def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
     """
     Initializes a query engine by loading an existing knowledge graph index
@@ -318,106 +327,105 @@ async def get_indexing_progress(chatbot_id: str):
     if not chatbot: raise HTTPException(status_code=404, detail="Chatbot not found")
     return IndexingProgressResponse(total_nodes=chatbot.total_nodes or 0, processed_nodes=chatbot.processed_nodes or 0, status=chatbot.status, current_step=chatbot.current_step)
 
-@app.post("/api/chat", response_model=ChatResponse)
+@app.post("/api/chat")
 async def chat_with_bot(request: ChatRequest):
     chatbot = chatbots_db.get(request.chatbot_id)
-    if not chatbot: raise HTTPException(status_code=404, detail="Chatbot not found")
-    if chatbot.status != ChatbotStatus.READY: raise HTTPException(status_code=423, detail=f"Chatbot is not ready. Current status: {chatbot.status}")
+    if not chatbot:
+        raise HTTPException(status_code=404, detail="Chatbot not found")
+    if chatbot.status != ChatbotStatus.READY:
+        raise HTTPException(
+            status_code=423,
+            detail=f"Chatbot is not ready. Current status: {chatbot.status}",
+        )
     query_engine = query_engines.get(request.chatbot_id)
-    if not query_engine: raise HTTPException(status_code=404, detail="Query engine not found. Please check server logs.")
-    try:
-        response = await query_engine.aquery(request.query)
-        sources = [Source(document_name=node.metadata.get('file_name', 'Unknown'), page_number=node.metadata.get('page_label'), snippet=node.get_content(metadata_mode="all")) for node in response.source_nodes]
-        
-        # NEW: Extract graph data from response metadata and format for frontend
-        formatted_graph_data = None
-        raw_kg_rel_map = None
+    if not query_engine:
+        raise HTTPException(
+            status_code=404, detail="Query engine not found. Please check server logs."
+        )
 
-        logger.info(f"DEBUG: Full response.metadata: {response.metadata}")
+    # --- NEW STREAMING IMPLEMENTATION ---
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            logger.info(
+                f"Received chat request for chatbot {request.chatbot_id} with query: {request.query}"
+            )
 
-        # Iterate through metadata values to find kg_rel_map
-        for key, value in response.metadata.items():
-            if isinstance(value, dict) and "kg_rel_map" in value:
-                raw_kg_rel_map = value["kg_rel_map"]
-                logger.info(f"DEBUG: Found raw_kg_rel_map under key {key}: {raw_kg_rel_map}")
-                break # Found it, no need to continue searching
+            # Step 1: Get the full, non-streaming response first to ensure process completion
+            response = await query_engine.aquery(request.query)
 
-        if raw_kg_rel_map:
-            nodes_set = set() # Use a set to store unique node IDs
-            links = []
-
-            for subject, triplets in raw_kg_rel_map.items():
-                nodes_set.add(subject)
-                for triplet in triplets:
-                    # Triplet is typically [relation, object]
-                    if len(triplet) == 2:
-                        relation, obj = triplet
-                        nodes_set.add(obj)
-                        links.append({"source": subject, "target": obj, "label": relation})
-                    # Handle cases where triplet might be (subject, relation, object) if it ever occurs
-                    elif len(triplet) == 3:
-                        s, relation, o = triplet
-                        nodes_set.add(s)
-                        nodes_set.add(o)
-                        links.append({"source": s, "target": o, "label": relation})
+            # Step 2: Extract all necessary data from the completed response
+            final_text = str(response)
+            sources = [
+                Source(
+                    document_name=node.metadata.get("file_name", "Unknown"),
+                    page_number=node.metadata.get("page_label"),
+                    snippet=node.get_content(metadata_mode="all"),
+                ).dict()
+                for node in response.source_nodes
+            ]
             
-            formatted_graph_data = {
-                "nodes": [{"id": node, "label": node} for node in nodes_set],
-                "links": links
-            }
-            logger.info(f"DEBUG: Formatted graph data: {formatted_graph_data}")
-        else:
-            logger.info("DEBUG: raw_kg_rel_map was not found or was empty.")
-        
-        logger.info(f"Received chat request for chatbot {request.chatbot_id} with query: {request.query}")
-        response = await query_engine.aquery(request.query)
-        logger.info(f"Query engine response received. Type: {type(response)}, Content: {str(response)[:200]}...")
-        sources = [Source(document_name=node.metadata.get('file_name', 'Unknown'), page_number=node.metadata.get('page_label'), snippet=node.get_content(metadata_mode="all")) for node in response.source_nodes]
-        
-        # NEW: Extract graph data from response metadata and format for frontend
-        formatted_graph_data = None
-        raw_kg_rel_map = None
+            # Extract graph data
+            formatted_graph_data = None
+            raw_kg_rel_map = response.metadata.get("kg_rel_map") if response.metadata else None
+            if not raw_kg_rel_map:
+                 for key, value in response.metadata.items():
+                    if isinstance(value, dict) and "kg_rel_map" in value:
+                        raw_kg_rel_map = value["kg_rel_map"]
+                        break
 
-        logger.info(f"DEBUG: Full response.metadata: {response.metadata}")
+            if raw_kg_rel_map:
+                nodes_set = set()
+                links = []
+                for subject, triplets in raw_kg_rel_map.items():
+                    nodes_set.add(subject)
+                    for triplet in triplets:
+                        if len(triplet) == 2:
+                            relation, obj = triplet
+                            nodes_set.add(obj)
+                            links.append({"source": subject, "target": obj, "label": relation})
+                        elif len(triplet) == 3:
+                            s, relation, o = triplet
+                            nodes_set.add(s)
+                            nodes_set.add(o)
+                            links.append({"source": s, "target": o, "label": relation})
+                formatted_graph_data = {
+                    "nodes": [{"id": node, "label": node} for node in nodes_set],
+                    "links": links
+                }
 
-        # Iterate through metadata values to find kg_rel_map
-        for key, value in response.metadata.items():
-            if isinstance(value, dict) and "kg_rel_map" in value:
-                raw_kg_rel_map = value["kg_rel_map"]
-                logger.info(f"DEBUG: Found raw_kg_rel_map under key {key}: {raw_kg_rel_map}")
-                break # Found it, no need to continue searching
-
-        if raw_kg_rel_map:
-            nodes_set = set() # Use a set to store unique node IDs
-            links = []
-
-            for subject, triplets in raw_kg_rel_map.items():
-                nodes_set.add(subject)
-                for triplet in triplets:
-                    # Triplet is typically [relation, object]
-                    if len(triplet) == 2:
-                        relation, obj = triplet
-                        nodes_set.add(obj)
-                        links.append({"source": subject, "target": obj, "label": relation})
-                    # Handle cases where triplet might be (subject, relation, object) if it ever occurs
-                    elif len(triplet) == 3:
-                        s, relation, o = triplet
-                        nodes_set.add(s)
-                        nodes_set.add(o)
-                        links.append({"source": s, "target": o, "label": relation})
+            # Step 3: Stream the extracted data piece by piece
             
-            formatted_graph_data = {
-                "nodes": [{"id": node, "label": node} for node in nodes_set],
-                "links": links
-            }
-            logger.info(f"DEBUG: Formatted graph data: {formatted_graph_data}")
-        else:
-            logger.info("DEBUG: raw_kg_rel_map was not found or was empty.")
-        
-        return ChatResponse(response=str(response), sources=sources, graph_data=formatted_graph_data)
-    except Exception as e:
-        logger.error(f"Error during query for chatbot {request.chatbot_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An error occurred while querying the chatbot.")
+            # Stream the final text char by char for a smoother effect
+            for char in final_text:
+                message_json = ChatResponse(
+                    event=StreamEvent.MESSAGE, data={"text": char}
+                ).dict()
+                yield f"data: {json.dumps(message_json)}\n\n"
+                await asyncio.sleep(0.02) # Adjust delay for desired speed
+
+            # Stream sources
+            sources_json = ChatResponse(event=StreamEvent.SOURCES, data={"sources": sources}).dict()
+            yield f"data: {json.dumps(sources_json)}\n\n"
+
+            # Stream graph data
+            if formatted_graph_data:
+                graph_json = ChatResponse(event=StreamEvent.GRAPH, data=formatted_graph_data).dict()
+                yield f"data: {json.dumps(graph_json)}\n\n"
+
+        except Exception as e:
+            logger.error(
+                f"Error during query for chatbot {request.chatbot_id}: {e}",
+                exc_info=True,
+            )
+            error_data = {"error": "An error occurred while querying the chatbot."}
+            error_json = ChatResponse(event=StreamEvent.DONE, data=error_data).dict()
+            yield f"data: {json.dumps(error_json)}\n\n"
+        finally:
+            # Signal the end of the stream
+            done_json = ChatResponse(event=StreamEvent.DONE, data={}).dict()
+            yield f"data: {json.dumps(done_json)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/api/chatbots/{chatbot_id}/graph")
 def get_graph_data(chatbot_id: str):

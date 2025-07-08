@@ -39,8 +39,6 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
   const [error, setError] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
 
-  const fileInputRefs = useRef<{[key: string]: HTMLInputElement | null}>({});
-
   // Function to fetch all chatbots
   const loadChatbots = async () => {
     try {
@@ -86,28 +84,6 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
 
     return () => clearInterval(interval);
   }, [chatbots]);
-
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>, chatbotId: string) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      await uploadKnowledgeSource(chatbotId, file);
-      setNotification({ open: true, message: `File upload started. Indexing will begin shortly.`, severity: 'success' });
-      // Immediately update status to INDEXING visually and then reload
-      setChatbots(prev => prev.map(b => b.id === chatbotId ? { ...b, status: ChatbotStatus.INDEXING } : b));
-      setTimeout(loadChatbots, 1000); // Refresh list after a short delay
-    } catch (err) {
-      setNotification({ open: true, message: 'File upload failed.', severity: 'error' });
-      console.error(err);
-    } finally {
-      // Reset file input
-      const fileInput = fileInputRefs.current[chatbotId];
-      if(fileInput) {
-        fileInput.value = '';
-      }
-    }
-  };
 
   const handleCloseNotification = () => {
     setNotification({ ...notification, open: false });
@@ -175,20 +151,6 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
                   />
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     {!isIndexing && getStatusChip(chatbot)}
-                    <Button
-                      variant="contained"
-                      component="label"
-                      disabled={isIndexing}
-                      onClick={(e) => e.stopPropagation()} // Prevent ListItem click event
-                    >
-                      {isIndexing ? <CircularProgress size={24} /> : 'Upload File'}
-                      <input 
-                        type="file" 
-                        hidden 
-                        onChange={(e) => handleFileChange(e, chatbot.id)}
-                        ref={el => fileInputRefs.current[chatbot.id] = el}
-                      />
-                    </Button>
                   </Box>
                 </ListItemButton>
               )

@@ -101,7 +101,7 @@ const Home: React.FC = () => {
               <Typography variant="h6" gutterBottom>
                 Management
               </Typography>
-              <Accordion>
+              <Accordion defaultExpanded>
                 <AccordionSummary
                   expandIcon={<ExpandMoreIcon />}
                   aria-controls="panel1a-content"

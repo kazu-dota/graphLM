@@ -64,12 +64,55 @@ export const getIndexingProgress = async (chatbotId: string) => {
   }
 };
 
-export const chatWithBot = async (chatbotId: string, query: string) => {
+export const chatWithBot = async (chatbotId: string, query: string, onStreamEvent: (event: any) => void) => {
   try {
-    const response = await api.post('/api/chat', { chatbot_id: chatbotId, query });
-    return response.data;
+    const response = await fetch(`${API_BASE_URL}/api/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify({ chatbot_id: chatbotId, query }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || 'Failed to fetch stream');
+    }
+
+    if (!response.body) {
+      throw new Error('Response body is null');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || ''; // Keep the last, possibly incomplete line
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const jsonStr = line.substring(6);
+            const eventData = JSON.parse(jsonStr);
+            onStreamEvent(eventData);
+          } catch (e) {
+            console.error('Failed to parse stream event:', line, e);
+          }
+        }
+      }
+    }
+
   } catch (error) {
-    console.error('Error chatting with bot:', error);
+    console.error('Error in chatWithBot:', error);
+    onStreamEvent({ event: 'done', data: { error: error instanceof Error ? error.message : String(error) } });
     throw error;
   }
 };

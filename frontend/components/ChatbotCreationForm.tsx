@@ -1,132 +1,138 @@
-
-import React, { useState } from 'react';
-import { Box, Typography, TextField, Button, Stepper, Step, StepLabel, StepContent, Paper } from '@mui/material';
-import { createChatbot } from '../utils/api';
-import KnowledgeSourceUpload from './KnowledgeSourceUpload'; // Import the component
+import React, { useState, useCallback } from 'react';
+import { Box, Typography, TextField, Button, Paper, List, ListItem, ListItemText, IconButton, LinearProgress, ListItemIcon } from '@mui/material';
+import { useDropzone } from 'react-dropzone';
+import { createChatbot, uploadKnowledgeSource } from '../utils/api';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import DeleteIcon from '@mui/icons-material/Delete';
+import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 
 interface ChatbotCreationFormProps {
   onChatbotCreated: () => void;
 }
 
-const steps = ['Enter Chatbot Details', 'Upload Knowledge Sources', 'Finish'];
-
 const ChatbotCreationForm: React.FC<ChatbotCreationFormProps> = ({ onChatbotCreated }) => {
-  const [activeStep, setActiveStep] = useState(0);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [createdChatbotId, setCreatedChatbotId] = useState<string | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [isCreating, setIsCreating] = useState(false);
 
-  const handleNext = async () => {
-    if (activeStep === 0) {
-      if (!name) {
-        alert('Please enter a chatbot name.');
-        return;
-      }
-      setIsCreating(true);
-      try {
-        const chatbot = await createChatbot(name, description);
-        setCreatedChatbotId(chatbot.id);
-        onChatbotCreated(); // Refresh list in the background
-        setActiveStep((prevActiveStep) => prevActiveStep + 1);
-      } catch (error) {
-        alert('Failed to create chatbot.');
-      } finally {
-        setIsCreating(false);
-      }
-    } else {
-      setActiveStep((prevActiveStep) => prevActiveStep + 1);
-    }
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    setFiles(prevFiles => [...prevFiles, ...acceptedFiles]);
+  }, []);
+
+  const removeFile = (fileToRemove: File) => {
+    setFiles(prevFiles => prevFiles.filter(file => file !== fileToRemove));
   };
 
-  const handleBack = () => {
-    setActiveStep((prevActiveStep) => prevActiveStep - 1);
-  };
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop });
 
   const handleReset = () => {
-    setActiveStep(0);
     setName('');
     setDescription('');
-    setCreatedChatbotId(null);
+    setFiles([]);
+    setIsCreating(false);
+  };
+
+  const handleCreateAndBuild = async () => {
+    if (!name.trim() || files.length === 0) {
+      alert('Please provide a name and at least one file.');
+      return;
+    }
+    setIsCreating(true);
+    try {
+      // Step 1: Create the chatbot entry
+      const chatbot = await createChatbot(name, description);
+      
+      // Step 2: Upload files for the new chatbot
+      // This could be improved with parallel uploads
+      for (const file of files) {
+        await uploadKnowledgeSource(chatbot.id, file);
+      }
+      
+      alert(`Chatbot "${name}" created and file upload started. Indexing will begin shortly.`);
+      onChatbotCreated(); // Refresh the list in the parent component
+      handleReset(); // Clear the form for the next creation
+
+    } catch (error) {
+      alert('An error occurred during chatbot creation or file upload.');
+      console.error(error);
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
     <Box sx={{ width: '100%' }}>
-      <Stepper activeStep={activeStep} orientation="vertical">
-        {/* Step 1: Details */}
-        <Step>
-          <StepLabel>Enter Chatbot Details</StepLabel>
-          <StepContent>
-            <TextField
-              label="Chatbot Name"
-              variant="outlined"
-              fullWidth
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              sx={{ mt: 1, mb: 2 }}
-            />
-            <TextField
-              label="Description (Optional)"
-              variant="outlined"
-              fullWidth
-              multiline
-              rows={3}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              sx={{ mb: 2 }}
-            />
-            <Box sx={{ mb: 2 }}>
-              <div>
-                <Button
-                  variant="contained"
-                  onClick={handleNext}
-                  disabled={isCreating || !name}
-                  sx={{ mt: 1, mr: 1 }}
-                >
-                  {isCreating ? 'Creating...' : 'Continue'}
-                </Button>
-              </div>
-            </Box>
-          </StepContent>
-        </Step>
+      <Typography variant="h6" gutterBottom>Create New Chatbot</Typography>
+      <TextField
+        label="Chatbot Name"
+        variant="outlined"
+        fullWidth
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        required
+        sx={{ mt: 1, mb: 2 }}
+        disabled={isCreating}
+      />
+      <TextField
+        label="Description (Optional)"
+        variant="outlined"
+        fullWidth
+        multiline
+        rows={3}
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        sx={{ mb: 2 }}
+        disabled={isCreating}
+      />
 
-        {/* Step 2: Upload */}
-        <Step>
-          <StepLabel>Upload Knowledge Sources</StepLabel>
-          <StepContent>
-            {createdChatbotId && <KnowledgeSourceUpload chatbotId={createdChatbotId} />}
-            <Box sx={{ mb: 2 }}>
-              <div>
-                <Button
-                  variant="contained"
-                  onClick={handleNext}
-                  sx={{ mt: 1, mr: 1 }}
-                >
-                  Continue
-                </Button>
-                <Button
-                  onClick={handleBack}
-                  sx={{ mt: 1, mr: 1 }}
-                >
-                  Back
-                </Button>
-              </div>
-            </Box>
-          </StepContent>
-        </Step>
-        
-        {/* Step 3: Finish */}
-        <Step>
-            <StepLabel>Finish</StepLabel>
-            <StepContent>
-                <Typography>All steps completed - you&apos;re finished!</Typography>
-                <Button onClick={handleReset} sx={{ mt: 1, mr: 1 }}>
-                    Create Another Chatbot
-                </Button>
-            </StepContent>
-        </Step>
-      </Stepper>
+      <Paper
+        {...getRootProps()}
+        sx={{
+          p: 4,
+          border: '2px dashed grey',
+          borderColor: isDragActive ? 'primary.main' : 'grey.500',
+          textAlign: 'center',
+          cursor: 'pointer',
+          mb: 2,
+          backgroundColor: isDragActive ? '#f0f8ff' : 'inherit'
+        }}
+      >
+        <input {...getInputProps()} />
+        <CloudUploadIcon sx={{ fontSize: 48, color: 'grey.500' }} />
+        <Typography>Drag & drop knowledge files here, or click to select</Typography>
+      </Paper>
+
+      {files.length > 0 && (
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle1">Files to upload:</Typography>
+          <List dense>
+            {files.map((file, index) => (
+              <ListItem key={index} secondaryAction={
+                <IconButton edge="end" aria-label="delete" onClick={() => removeFile(file)} disabled={isCreating}>
+                  <DeleteIcon />
+                </IconButton>
+              }>
+                <ListItemIcon>
+                  <InsertDriveFileIcon />
+                </ListItemIcon>
+                <ListItemText primary={file.name} secondary={`${(file.size / 1024).toFixed(2)} KB`} />
+              </ListItem>
+            ))}
+          </List>
+        </Box>
+      )}
+
+      <Button 
+        variant="contained" 
+        onClick={handleCreateAndBuild} 
+        disabled={isCreating || !name.trim() || files.length === 0}
+        fullWidth
+        sx={{ mt: 2, py: 1.5 }}
+      >
+        {isCreating ? 'Creating...' : 'Create and Build Chatbot'}
+      </Button>
+      {isCreating && <LinearProgress sx={{ mt: 1 }} />}
     </Box>
   );
 };
