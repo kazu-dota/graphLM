@@ -1,8 +1,8 @@
 {
-    "a9ce9297-a6a0-4aa1-b83e-6216c230c62d": {
-        "id": "a9ce9297-a6a0-4aa1-b83e-6216c230c62d",
-        "name": "RAG",
-        "description": "てすと\n",
+    "600b4c1a-b844-473e-ab8e-d5b0f365b4cd": {
+        "id": "600b4c1a-b844-473e-ab8e-d5b0f365b4cd",
+        "name": "テスト",
+        "description": null,
         "status": "READY",
         "total_nodes": 0,
         "processed_nodes": 0,

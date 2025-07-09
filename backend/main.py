@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -11,6 +12,7 @@ import logging
 from enum import Enum
 import json
 import asyncio
+import nltk
 
 from llama_index.core.chat_engine.types import StreamingAgentChatResponse
 
@@ -57,6 +59,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/files", StaticFiles(directory=UPLOAD_DIRECTORY), name="files")
+
 # --- Status Enums & API Models (No changes) ---
 class ChatbotStatus(str, Enum):
     INDEXING = "INDEXING"
@@ -90,6 +94,7 @@ class Source(BaseModel):
     document_name: str
     page_number: Optional[int] = None
     snippet: Optional[str] = None
+    url: Optional[str] = None
 
 class StreamEvent(str, Enum):
     MESSAGE = "message"
@@ -138,7 +143,7 @@ LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
 #     logger.info("Langfuse OpenInference instrumentation initialized for LlamaIndex.")
 # else:
 #     logger.warning("Langfuse environment variables not fully set. Skipping Langfuse OpenInference integration.")
-def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
+async def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
     """
     Initializes a query engine by loading an existing knowledge graph index
     from its dedicated persistence directory and connecting to Neo4j.
@@ -150,7 +155,9 @@ def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
         if not os.path.exists(os.path.join(persist_dir, "index_store.json")):
              raise FileNotFoundError(f"Index metadata 'index_store.json' not found in {persist_dir}. The index may not have been built or persisted correctly.")
 
-        graph_store = Neo4jGraphStore(
+        # Run blocking Neo4jGraphStore initialization in a separate thread
+        graph_store = await asyncio.to_thread(
+            Neo4jGraphStore,
             username=NEO4J_USERNAME,
             password=NEO4J_PASSWORD,
             url=NEO4J_URI,
@@ -164,7 +171,9 @@ def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
         )
         
         logger.info(f"Loading index for chatbot {chatbot_id} from storage...")
-        index = load_index_from_storage(
+        # Run blocking load_index_from_storage in a separate thread
+        index = await asyncio.to_thread(
+            load_index_from_storage,
             storage_context=storage_context,
         )
 
@@ -182,6 +191,9 @@ def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
         query_engines[chatbot_id] = query_engine
         logger.info(f"Query engine for {chatbot_id} re-initialized successfully.")
 
+    except asyncio.CancelledError:
+        logger.warning(f"Initialization of query engine for chatbot {chatbot_id} was cancelled.")
+        raise # Re-raise to propagate the cancellation
     except Exception as e:
         logger.error(f"Failed to load index from storage for chatbot_id: {chatbot_id}. Error: {e}", exc_info=True)
         raise
@@ -251,7 +263,7 @@ def build_knowledge_graph(chatbot_id: str):
             save_chatbots_metadata()
 
 # --- Persistence Functions ---
-def load_chatbots_metadata():
+async def load_chatbots_metadata():
     # ... (No changes here, but the logic inside that calls initialize_... is now more robust)
     global chatbots_db
     if not os.path.exists(CHATBOTS_METADATA_FILE):
@@ -268,7 +280,12 @@ def load_chatbots_metadata():
             if chatbot.status == ChatbotStatus.READY:
                 logger.info(f"Found READY chatbot: {bot_id}. Initializing its query engine.")
                 try:
-                    initialize_query_engine_for_ready_chatbot(bot_id)
+                    await initialize_query_engine_for_ready_chatbot(bot_id)
+                except asyncio.CancelledError:
+                    # If initialization is cancelled, mark as failed and re-raise
+                    chatbot.status = ChatbotStatus.FAILED
+                    logger.warning(f"Initialization for chatbot {bot_id} was cancelled. Marking as FAILED.")
+                    # No need to re-raise here, as the outer loop will continue
                 except Exception as e:
                     logger.error(f"Failed to initialize query engine for {bot_id} on startup. Marking as FAILED.")
                     chatbot.status = ChatbotStatus.FAILED
@@ -287,7 +304,17 @@ def save_chatbots_metadata():
 # --- FastAPI Events ---
 @app.on_event("startup")
 async def startup_event():
-    load_chatbots_metadata()
+    # Download nltk data if not already present
+    try:
+        nltk.data.find('corpora/stopwords')
+    except LookupError:
+        nltk.download('stopwords')
+    try:
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        nltk.download('punkt')
+
+    await load_chatbots_metadata()
 
 # --- API Endpoints ---
 @app.get("/")
@@ -399,42 +426,75 @@ async def chat_with_bot(request: ChatRequest):
             response = await query_engine.aquery(request.query)
 
             # Step 2: Extract all necessary data from the completed response
+            logger.info(f"Response metadata: {response.metadata}")
+
             final_text = str(response)
-            sources = [
-                Source(
-                    document_name=node.metadata.get("file_name", "Unknown"),
-                    page_number=node.metadata.get("page_label"),
-                    snippet=node.get_content(metadata_mode="all"),
-                ).dict()
-                for node in response.source_nodes
-            ]
+            sources = []
+            for node in response.source_nodes:
+                file_name = node.metadata.get("file_name", "Unknown")
+                url = f"/files/{request.chatbot_id}/{file_name}" if file_name != "Unknown" else None
+                sources.append(
+                    Source(
+                        document_name=file_name,
+                        page_number=node.metadata.get("page_label"),
+                        snippet=node.get_content(metadata_mode="all"),
+                        url=url,
+                    ).dict()
+                )
             
-            # Extract graph data
             formatted_graph_data = None
             raw_kg_rel_map = response.metadata.get("kg_rel_map") if response.metadata else None
+            
+            logger.info(f"Initial raw_kg_rel_map: {raw_kg_rel_map}")
+
             if not raw_kg_rel_map:
-                 for key, value in response.metadata.items():
+                for key, value in response.metadata.items():
                     if isinstance(value, dict) and "kg_rel_map" in value:
                         raw_kg_rel_map = value["kg_rel_map"]
+                        logger.info(f"Found nested raw_kg_rel_map: {raw_kg_rel_map}")
                         break
 
             if raw_kg_rel_map:
+                logger.info(f"Processing raw_kg_rel_map for graph: {raw_kg_rel_map}")
+                # First, create a map of source_node_id to its text content
+                source_text_map = {node.id_: node.get_content() for node in response.source_nodes}
+
                 nodes_set = set()
                 links = []
-                for subject, triplets in raw_kg_rel_map.items():
-                    nodes_set.add(subject)
+                
+                # Known relationship types to exclude from links
+                # RELATIONSHIP_TYPES_TO_EXCLUDE = {"INCLUDES", "FOCUSES_ON"} # Commented out for testing
+
+                # The keys of raw_kg_rel_map are the source_node_ids
+                for source_node_id, triplets in raw_kg_rel_map.items():
+                    source_text = source_text_map.get(source_node_id, "")
                     for triplet in triplets:
+                        # Expecting [relation, object]
                         if len(triplet) == 2:
-                            relation, obj = triplet
-                            nodes_set.add(obj)
-                            links.append({"source": subject, "target": obj, "label": relation})
-                        elif len(triplet) == 3:
-                            s, relation, o = triplet
-                            nodes_set.add(s)
-                            nodes_set.add(o)
-                            links.append({"source": s, "target": o, "label": relation})
+                            rel, obj = triplet
+                            subj = source_node_id # The subject is the key of the raw_kg_rel_map
+
+                            nodes_set.add(subj)
+                            nodes_set.add(obj) # Add object as a node
+
+                            # Only add link if both source and target are valid (removed exclusion filter)
+                            if subj and obj:
+                                links.append({
+                                    "source": subj,
+                                    "target": obj,
+                                    "label": rel,
+                                    "source_text": source_text # Add the source text to the link
+                                })
+                        else:
+                            # Log malformed triplets if necessary for debugging
+                            logger.warning(f"Malformed triplet encountered: {triplet}")
+                            continue # Skip malformed triplets
+
+                # All collected nodes are considered entities for now.
+                filtered_nodes_set = nodes_set 
+
                 formatted_graph_data = {
-                    "nodes": [{"id": node, "label": node} for node in nodes_set],
+                    "nodes": [{"id": node, "label": node} for node in filtered_nodes_set],
                     "links": links
                 }
 

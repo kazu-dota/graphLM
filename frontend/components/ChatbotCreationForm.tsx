@@ -90,16 +90,17 @@ const ChatbotCreationForm: React.FC<ChatbotCreationFormProps> = ({ onChatbotCrea
         {...getRootProps()}
         sx={{
           p: 4,
-          border: '2px dashed grey',
-          borderColor: isDragActive ? 'primary.main' : 'grey.500',
+          border: '2px dashed',
+          borderColor: isDragActive ? 'primary.main' : 'divider',
           textAlign: 'center',
           cursor: 'pointer',
           mb: 2,
-          backgroundColor: isDragActive ? '#f0f8ff' : 'inherit'
+          backgroundColor: isDragActive ? 'action.hover' : 'transparent',
+          color: 'text.secondary'
         }}
       >
         <input {...getInputProps()} />
-        <CloudUploadIcon sx={{ fontSize: 48, color: 'grey.500' }} />
+        <CloudUploadIcon sx={{ fontSize: 48, color: 'text.secondary' }} />
         <Typography>Drag & drop knowledge files here, or click to select</Typography>
       </Paper>
 

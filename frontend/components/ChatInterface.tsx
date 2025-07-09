@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Box, Typography, TextField, Button, Paper, CircularProgress, List, ListItem, ListItemText, Divider, Grid, Card, CardContent } from '@mui/material';
+import { Box, Typography, TextField, Button, Paper, CircularProgress, List, ListItem, ListItemText, Divider, Grid, Card, CardContent, Link, ListItemButton } from '@mui/material';
 import { chatWithBot } from '../utils/api';
 import { ChatbotStatus } from './ChatbotList';
 
@@ -136,7 +136,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
   return (
     <Box sx={{ width: '100%', height: '100%' }}>
       <Paper elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <Typography variant="h6" sx={{ p: 2, borderBottom: '1px solid #ddd' }}>
+        <Typography variant="h6" sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
           Conversation
         </Typography>
         <Box sx={{ flexGrow: 1, overflowY: 'auto', p: 2 }}>
@@ -149,9 +149,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
                   display: 'inline-block',
                   minWidth: '10%',
                   maxWidth: '90%',
-                  bgcolor: msg.sender === 'user' ? 'primary.light' : 'background.paper',
+                  bgcolor: msg.sender === 'user' ? 'primary.dark' : 'background.paper',
                   border: '1px solid',
-                  borderColor: selectedMessage?.id === msg.id ? 'primary.dark' : '#ddd',
+                  borderColor: selectedMessage?.id === msg.id ? 'primary.main' : 'divider',
                   boxShadow: selectedMessage?.id === msg.id ? '0px 0px 8px rgba(0, 0, 0, 0.2)' : 'none',
                   float: msg.sender === 'user' ? 'right' : 'left',
                   clear: 'both',
@@ -170,18 +170,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
                       References:
                     </Typography>
                     <List dense>
-                      {msg.sources.filter(source => source.document_name).map((source, i) => (
-                        <ListItem 
-                          key={i} 
-                          sx={{ pl: 0 }} 
-                          onMouseEnter={() => onSourceHover(source.document_name)} 
-                          onMouseLeave={() => onSourceHover(null)}
-                        >
-                          <ListItemText
-                            primary={source.document_name}
-                            secondary={`Page: ${source.page_number || 'N/A'}`}
-                          />
-                        </ListItem>
+                      {msg.sources.filter(source => source.document_name && source.url).map((source, i) => (
+                        <Link href={`http://localhost:8000${source.url}`} target="_blank" rel="noopener noreferrer" key={i} sx={{ textDecoration: 'none', color: 'inherit' }}>
+                          <ListItemButton
+                            onMouseEnter={() => onSourceHover(source.document_name)}
+                            onMouseLeave={() => onSourceHover(null)}
+                          >
+                            <ListItemText
+                              primary={source.document_name}
+                              secondary={`Page: ${source.page_number || 'N/A'}`}
+                            />
+                          </ListItemButton>
+                        </Link>
                       ))}
                     </List>
                   </Box>

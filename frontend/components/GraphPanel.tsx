@@ -66,14 +66,14 @@ const GraphPanel: React.FC<GraphPanelProps> = ({ mainGraphData, isMainGraphLoadi
                   <CircularProgress />
                 </Box>
               ) : (
-                <GraphView graphData={mainGraphData} highlightedNodes={hoveredNodeId ? new Set([hoveredNodeId]) : new Set()} />
+                <GraphView graphData={mainGraphData} highlightedNodes={hoveredNodeId ? new Set([hoveredNodeId]) : new Set()} selectedMessage={selectedMessage} />
               )}
             </Box>
           )}
           {selectedTab === 1 && (
             <Box sx={{ height: '100%', width: '100%' }}>
               {referenceGraphData ? (
-                <GraphView graphData={referenceGraphData} />
+                <GraphView graphData={referenceGraphData} selectedMessage={selectedMessage} />
               ) : (
                 <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
                   <Typography variant="body2">No reference graph available for the current chat.</Typography>

@@ -81,7 +81,7 @@ const ChatPage: React.FC = () => {
       <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
         {chatbotId ? (
           <Box sx={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 128px)', gap: 3 }}>
-            <Box sx={{ flex: '2 1 auto', minHeight: '500px', resize: 'vertical', overflow: 'auto', border: '1px solid #ccc', p: 1 }}>
+            <Box sx={{ flex: '2 1 auto', minHeight: '500px', resize: 'vertical', overflow: 'auto', border: 1, borderColor: 'divider', p: 1 }}>
               <ChatInterface 
                 chatbotId={chatbotId as string} 
                 chatbotStatus={selectedChatbotStatus} 
@@ -89,7 +89,7 @@ const ChatPage: React.FC = () => {
                 onSourceHover={setHoveredNodeId}
               />
             </Box>
-            <Box sx={{ flex: '1 1 auto', minHeight: '200px', resize: 'vertical', overflow: 'auto', border: '1px solid #ccc', p: 1 }}>
+            <Box sx={{ flex: '1 1 auto', minHeight: '200px', resize: 'vertical', overflow: 'auto', border: 1, borderColor: 'divider', p: 1 }}>
               <GraphPanel 
                 mainGraphData={mainGraphData} 
                 isMainGraphLoading={isGraphLoading} 
