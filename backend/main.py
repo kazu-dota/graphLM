@@ -78,6 +78,10 @@ class Chatbot(BaseModel):
     processed_nodes: Optional[int] = 0
     current_step: Optional[IndexingStep] = None
 
+class ChatbotUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
 class ChatRequest(BaseModel):
     chatbot_id: str
     query: str
@@ -243,6 +247,7 @@ def build_knowledge_graph(chatbot_id: str):
         if chatbot:
             chatbot.status = ChatbotStatus.FAILED
             chatbot.current_step = None
+            chatbot.description = f"Indexing failed: {str(e)}" # Store error message
             save_chatbots_metadata()
 
 # --- Persistence Functions ---
@@ -292,6 +297,46 @@ async def read_root():
 @app.get("/api/chatbots", response_model=List[Chatbot])
 async def get_chatbots():
     return list(chatbots_db.values())
+
+@app.put("/api/chatbots/{chatbot_id}", response_model=Chatbot)
+async def update_chatbot(chatbot_id: str, chatbot_update: ChatbotUpdate):
+    if chatbot_id not in chatbots_db:
+        raise HTTPException(status_code=404, detail="Chatbot not found")
+    
+    existing_chatbot = chatbots_db[chatbot_id]
+    if chatbot_update.name is not None:
+        existing_chatbot.name = chatbot_update.name
+    if chatbot_update.description is not None:
+        existing_chatbot.description = chatbot_update.description
+    
+    save_chatbots_metadata()
+    logger.info(f"Updated chatbot: {existing_chatbot.name} ({existing_chatbot.id})")
+    return existing_chatbot
+
+@app.delete("/api/chatbots/{chatbot_id}", status_code=204)
+async def delete_chatbot(chatbot_id: str):
+    if chatbot_id not in chatbots_db:
+        raise HTTPException(status_code=404, detail="Chatbot not found")
+    
+    # Remove from in-memory store
+    del chatbots_db[chatbot_id]
+    if chatbot_id in query_engines:
+        del query_engines[chatbot_id]
+
+    # Remove associated files and storage
+    chatbot_upload_dir = os.path.join(UPLOAD_DIRECTORY, chatbot_id)
+    if os.path.exists(chatbot_upload_dir):
+        shutil.rmtree(chatbot_upload_dir)
+        logger.info(f"Removed upload directory: {chatbot_upload_dir}")
+
+    chatbot_storage_dir = os.path.join(STORAGE_DIRECTORY, chatbot_id)
+    if os.path.exists(chatbot_storage_dir):
+        shutil.rmtree(chatbot_storage_dir)
+        logger.info(f"Removed storage directory: {chatbot_storage_dir}")
+
+    save_chatbots_metadata()
+    logger.info(f"Deleted chatbot: {chatbot_id}")
+    return
 
 @app.post("/api/chatbots", response_model=Chatbot, status_code=201)
 async def create_chatbot(name: str = Form(...), description: Optional[str] = Form(None)):
@@ -401,7 +446,6 @@ async def chat_with_bot(request: ChatRequest):
                     event=StreamEvent.MESSAGE, data={"text": char}
                 ).dict()
                 yield f"data: {json.dumps(message_json)}\n\n"
-                await asyncio.sleep(0.02) # Adjust delay for desired speed
 
             # Stream sources
             sources_json = ChatResponse(event=StreamEvent.SOURCES, data={"sources": sources}).dict()

@@ -1,27 +1,9 @@
 {
     "a9ce9297-a6a0-4aa1-b83e-6216c230c62d": {
         "id": "a9ce9297-a6a0-4aa1-b83e-6216c230c62d",
-        "name": "テスト",
-        "description": null,
+        "name": "RAG",
+        "description": "てすと\n",
         "status": "READY",
-        "total_nodes": 0,
-        "processed_nodes": 0,
-        "current_step": null
-    },
-    "25392803-3f93-4bf1-818d-120bcd566852": {
-        "id": "25392803-3f93-4bf1-818d-120bcd566852",
-        "name": "202507--",
-        "description": null,
-        "status": "FAILED",
-        "total_nodes": 0,
-        "processed_nodes": 0,
-        "current_step": null
-    },
-    "664803b5-cf07-439c-b172-45a25fb5e027": {
-        "id": "664803b5-cf07-439c-b172-45a25fb5e027",
-        "name": "kazu",
-        "description": null,
-        "status": "FAILED",
         "total_nodes": 0,
         "processed_nodes": 0,
         "current_step": null

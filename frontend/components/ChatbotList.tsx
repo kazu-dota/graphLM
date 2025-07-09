@@ -1,6 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Box, Typography, Card, CardContent, List, ListItem, ListItemText, CircularProgress, Button, Snackbar, Alert, ListItemButton, Chip } from '@mui/material';
-import { fetchChatbots, uploadKnowledgeSource, getIndexingProgress } from '../utils/api';
+import { Box, Typography, Card, CardContent, List, ListItem, ListItemText, CircularProgress, Button, Snackbar, Alert, ListItemButton, Chip, IconButton } from '@mui/material';
+import { fetchChatbots, updateChatbot, deleteChatbot, getIndexingProgress } from '../utils/api';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogTitle from '@mui/material/DialogTitle';
+import TextField from '@mui/material/TextField';
 
 // Define ChatbotStatus enum to match the backend
 export enum ChatbotStatus {
@@ -38,6 +46,14 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
+
+  const [openEditDialog, setOpenEditDialog] = useState(false);
+  const [currentEditChatbot, setCurrentEditChatbot] = useState<Chatbot | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+
+  const [openDeleteConfirm, setOpenDeleteConfirm] = useState(false);
+  const [chatbotToDelete, setChatbotToDelete] = useState<Chatbot | null>(null);
 
   // Function to fetch all chatbots
   const loadChatbots = async () => {
@@ -89,6 +105,57 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
     setNotification({ ...notification, open: false });
   };
 
+  const handleEditClick = (chatbot: Chatbot) => {
+    setCurrentEditChatbot(chatbot);
+    setEditName(chatbot.name);
+    setEditDescription(chatbot.description || '');
+    setOpenEditDialog(true);
+  };
+
+  const handleEditDialogClose = () => {
+    setOpenEditDialog(false);
+    setCurrentEditChatbot(null);
+  };
+
+  const handleUpdateChatbot = async () => {
+    if (!currentEditChatbot) return;
+    try {
+      await updateChatbot(currentEditChatbot.id, editName, editDescription);
+      setNotification({ open: true, message: 'Chatbot updated successfully!', severity: 'success' });
+      loadChatbots();
+      handleEditDialogClose();
+    } catch (err) {
+      setNotification({ open: true, message: 'Failed to update chatbot.', severity: 'error' });
+      console.error(err);
+    }
+  };
+
+  const handleDeleteClick = (chatbot: Chatbot) => {
+    setChatbotToDelete(chatbot);
+    setOpenDeleteConfirm(true);
+  };
+
+  const handleDeleteConfirmClose = () => {
+    setOpenDeleteConfirm(false);
+    setChatbotToDelete(null);
+  };
+
+  const handleDeleteChatbot = async () => {
+    if (!chatbotToDelete) return;
+    try {
+      await deleteChatbot(chatbotToDelete.id);
+      setNotification({ open: true, message: 'Chatbot deleted successfully!', severity: 'success' });
+      loadChatbots();
+      handleDeleteConfirmClose();
+      if (selectedChatbotId === chatbotToDelete.id) {
+        onChatbotSelect(''); // Deselect if the deleted chatbot was selected
+      }
+    } catch (err) {
+      setNotification({ open: true, message: 'Failed to delete chatbot.', severity: 'error' });
+      console.error(err);
+    }
+  };
+
   const getStatusChip = (chatbot: Chatbot) => {
     switch (chatbot.status) {
       case ChatbotStatus.READY:
@@ -138,6 +205,11 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
                         >
                           {chatbot.description || 'No description provided.'}
                         </Typography>
+                        {chatbot.status === ChatbotStatus.FAILED && chatbot.description && (
+                          <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
+                            Error: {chatbot.description}
+                          </Typography>
+                        )}
                         {isIndexing && (
                           <Box sx={{ width: '100%', mt: 1 }}>
                             <LinearProgress variant="determinate" value={progress} />
@@ -151,6 +223,18 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
                   />
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     {!isIndexing && getStatusChip(chatbot)}
+                    <IconButton edge="end" aria-label="edit" onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditClick(chatbot);
+                    }} disabled={isIndexing}>
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton edge="end" aria-label="delete" onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteClick(chatbot);
+                    }} disabled={isIndexing}>
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
                   </Box>
                 </ListItemButton>
               )
@@ -163,6 +247,55 @@ const ChatbotList: React.FC<ChatbotListProps> = ({ refresh, onChatbotSelect, sel
           {notification.message}
         </Alert>
       </Snackbar>
+
+      {/* Edit Chatbot Dialog */}
+      <Dialog open={openEditDialog} onClose={handleEditDialogClose}>
+        <DialogTitle>Edit Chatbot</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            id="name"
+            label="Chatbot Name"
+            type="text"
+            fullWidth
+            variant="standard"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            margin="dense"
+            id="description"
+            label="Description"
+            type="text"
+            fullWidth
+            multiline
+            rows={4}
+            variant="standard"
+            value={editDescription}
+            onChange={(e) => setEditDescription(e.target.value)}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleEditDialogClose}>Cancel</Button>
+          <Button onClick={handleUpdateChatbot}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={openDeleteConfirm} onClose={handleDeleteConfirmClose}>
+        <DialogTitle>Confirm Deletion</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete "{chatbotToDelete?.name}"? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleDeleteConfirmClose}>Cancel</Button>
+          <Button onClick={handleDeleteChatbot} color="error">Delete</Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 };

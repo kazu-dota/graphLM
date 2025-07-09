@@ -126,3 +126,23 @@ export const getGraphData = async (chatbotId: string) => {
     throw error;
   }
 };
+
+export const updateChatbot = async (chatbotId: string, name: string, description?: string) => {
+  try {
+    const response = await api.put(`/api/chatbots/${chatbotId}`, { name, description });
+    return response.data;
+  } catch (error) {
+    console.error(`Error updating chatbot ${chatbotId}:`, error);
+    throw error;
+  }
+};
+
+export const deleteChatbot = async (chatbotId: string) => {
+  try {
+    await api.delete(`/api/chatbots/${chatbotId}`);
+    return true;
+  } catch (error) {
+    console.error(`Error deleting chatbot ${chatbotId}:`, error);
+    throw error;
+  }
+};
