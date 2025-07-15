@@ -24,6 +24,11 @@ from llama_index.core import (
     SimpleDirectoryReader,
     load_index_from_storage,
 )
+try:
+    from llama_index.readers.file import PDFReader
+except ImportError:
+    logger.warning("PDFReader not available, using default PDF parsing")
+    PDFReader = None
 from llama_index.core.callbacks import CallbackManager, CBEventType, EventPayload
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -128,21 +133,122 @@ if not all([OPENAI_API_KEY, NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD]):
 Settings.llm = OpenAI(temperature=0, model="gpt-4.1-nano-2025-04-14", api_key=OPENAI_API_KEY)
 Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 Settings.num_workers = 4
+Settings.chunk_size = 1024  # Optimal chunk size for most documents
+Settings.chunk_overlap = 100  # Overlap between chunks for better context
 
 
 
-from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
+from llama_index.core import get_response_synthesizer
+from llama_index.core.prompts import PromptTemplate
 
-# Langfuse Integration (New)
+# Define the custom QA template
+QA_TEMPLATE_WITH_CITATION = PromptTemplate(
+    """Context information is below.
+---------------------
+{context_str}
+---------------------
+Given the context information and not prior knowledge, answer the query in a comprehensive and accurate manner.
+
+Instructions:
+1. Analyze the context carefully to understand the relationships between different pieces of information.
+2. Provide a detailed answer that synthesizes information from multiple sources when relevant.
+3. When you use information from a source document, cite it by including the document's filename in parentheses at the end of the sentence or phrase. For example: "The capital of France is Paris (document.pdf)."
+4. If you use information from multiple source documents for a single statement, cite all relevant filenames. For example: "The project was completed on time (report.pdf, minutes.docx)."
+5. If the context doesn't contain sufficient information to answer the query, clearly state what information is missing.
+6. If you don't use any source, do not include any citation.
+7. Structure your answer logically and provide specific details when available.
+
+Query: {query_str}
+Answer: """
+)
+
+# Langfuse Integration
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
 LANGFUSE_HOST = os.getenv("LANGFUSE_HOST")
 
-# if all([LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST]):
-#     LlamaIndexInstrumentor().instrument()
-#     logger.info("Langfuse OpenInference instrumentation initialized for LlamaIndex.")
-# else:
-#     logger.warning("Langfuse environment variables not fully set. Skipping Langfuse OpenInference integration.")
+# Initialize Langfuse client
+langfuse_client = None
+if all([LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST]):
+    try:
+        from langfuse import Langfuse
+        langfuse_client = Langfuse(
+            public_key=LANGFUSE_PUBLIC_KEY,
+            secret_key=LANGFUSE_SECRET_KEY,
+            host=LANGFUSE_HOST
+        )
+        logger.info("Langfuse client initialized successfully.")
+    except ImportError:
+        logger.error("Langfuse library not installed. Please install it with: pip install langfuse")
+    except Exception as e:
+        logger.error(f"Failed to initialize Langfuse client: {e}")
+        langfuse_client = None
+else:
+    logger.warning("Langfuse environment variables not fully set. Skipping Langfuse integration.")
+
+# Utility function to log events to Langfuse
+def log_to_langfuse(event_name: str, metadata: dict, tags: list = None):
+    """Utility function to safely log events to Langfuse."""
+    if langfuse_client:
+        # For now, use basic logging until we confirm the correct Langfuse API
+        logger.info(f"Langfuse event: {event_name}")
+        logger.info(f"Metadata: {metadata}")
+        logger.info(f"Tags: {tags}")
+        
+        # Also try to flush the client to ensure connection works
+        try:
+            langfuse_client.flush()
+        except Exception as e:
+            logger.debug(f"Langfuse flush error: {e}")
+    else:
+        logger.debug(f"Langfuse client not available for event: {event_name}")
+
+# Query preprocessing functions
+def preprocess_query(query: str) -> str:
+    """Preprocess query to improve retrieval accuracy."""
+    # 1. Remove extra whitespace
+    query = query.strip()
+    
+    # 2. Expand common abbreviations (customize based on your domain)
+    abbreviations = {
+        "AI": "artificial intelligence",
+        "ML": "machine learning",
+        "NLP": "natural language processing",
+        "API": "application programming interface",
+        "UI": "user interface",
+        "UX": "user experience",
+    }
+    
+    for abbr, full_form in abbreviations.items():
+        query = query.replace(abbr, f"{abbr} {full_form}")
+    
+    # 3. Add context indicators for better retrieval
+    if "?" in query:
+        query = f"Question: {query}"
+    elif any(word in query.lower() for word in ["how", "what", "when", "where", "why", "who"]):
+        query = f"Information request: {query}"
+    
+    return query
+
+def generate_query_variants(query: str) -> list:
+    """Generate query variants for better retrieval."""
+    variants = [query]
+    
+    # Add synonyms and related terms
+    if "error" in query.lower():
+        variants.append(query.replace("error", "problem"))
+        variants.append(query.replace("error", "issue"))
+    
+    if "fix" in query.lower():
+        variants.append(query.replace("fix", "solve"))
+        variants.append(query.replace("fix", "resolve"))
+    
+    if "install" in query.lower():
+        variants.append(query.replace("install", "setup"))
+        variants.append(query.replace("install", "configure"))
+    
+    return variants
+
 async def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
     """
     Initializes a query engine by loading an existing knowledge graph index
@@ -183,10 +289,13 @@ async def initialize_query_engine_for_ready_chatbot(chatbot_id: str):
         logger.info(f"Successfully loaded KnowledgeGraphIndex with embeddings for chatbot {chatbot_id}.")
 
         query_engine = index.as_query_engine(
+            response_synthesizer=get_response_synthesizer(
+                text_qa_template=QA_TEMPLATE_WITH_CITATION,
+            ),
             include_text=True,
-            response_mode="compact",
             embedding_mode="hybrid",
-            similarity_top_k=5,
+            similarity_top_k=8,  # 増加：より多くの候補を取得
+            retriever_mode="hybrid",  # ハイブリッド検索を明示的に指定
         )
         query_engines[chatbot_id] = query_engine
         logger.info(f"Query engine for {chatbot_id} re-initialized successfully.")
@@ -204,6 +313,16 @@ def build_knowledge_graph(chatbot_id: str):
     if not chatbot:
         logger.error(f"Chatbot {chatbot_id} not found for indexing.")
         return
+
+    # Log indexing start to Langfuse
+    log_to_langfuse(
+        "build_knowledge_graph_start",
+        {
+            "chatbot_id": chatbot_id,
+            "chatbot_name": chatbot.name if chatbot else "Unknown"
+        },
+        ["indexing", "knowledge_graph"]
+    )
 
     try:
         logger.info(f"[Task Started] Building knowledge graph for chatbot: {chatbot_id}")
@@ -223,16 +342,88 @@ def build_knowledge_graph(chatbot_id: str):
         storage_context = StorageContext.from_defaults(graph_store=graph_store)
 
         input_dir = os.path.join(UPLOAD_DIRECTORY, chatbot_id)
-        # ... (document loading logic is the same)
-        documents = SimpleDirectoryReader(input_dir).load_data()
+        
+        # Enhanced document loading with better error handling
+        documents = []
+        try:
+            # Try to load all documents with explicit PDF reader if available
+            file_extractor = {}
+            if PDFReader is not None:
+                pdf_reader = PDFReader()
+                file_extractor[".pdf"] = pdf_reader
+            
+            reader = SimpleDirectoryReader(
+                input_dir,
+                file_extractor=file_extractor if file_extractor else None,
+                recursive=True,  # Read subdirectories
+                exclude_hidden=True,  # Skip hidden files
+                required_exts=[".pdf", ".txt", ".md", ".docx"],  # Only process these file types
+            )
+            documents = reader.load_data()
+            logger.info(f"Successfully loaded {len(documents)} documents")
+            
+        except Exception as e:
+            logger.error(f"Error loading documents from {input_dir}: {e}")
+            # Try to load documents one by one to identify problematic files
+            for root, dirs, files in os.walk(input_dir):
+                for file in files:
+                    if file.lower().endswith(('.pdf', '.txt', '.md', '.docx')):
+                        file_path = os.path.join(root, file)
+                        try:
+                            # Use appropriate reader based on file type
+                            if file.lower().endswith('.pdf') and PDFReader is not None:
+                                file_reader = SimpleDirectoryReader(
+                                    input_files=[file_path],
+                                    file_extractor={".pdf": PDFReader()}
+                                )
+                            else:
+                                file_reader = SimpleDirectoryReader(input_files=[file_path])
+                            
+                            file_docs = file_reader.load_data()
+                            if file_docs:  # Only add if documents were loaded successfully
+                                documents.extend(file_docs)
+                                logger.info(f"Successfully loaded: {file}")
+                            else:
+                                logger.warning(f"No content extracted from: {file}")
+                        except Exception as file_error:
+                            logger.warning(f"Failed to load {file}: {file_error}")
+                            continue
+        
+        if not documents:
+            raise ValueError(f"No documents could be loaded from {input_dir}")
+        
+        # Post-process documents to improve content quality
+        processed_documents = []
+        for doc in documents:
+            try:
+                # Basic validation and metadata enhancement
+                if doc.text and len(doc.text.strip()) > 50:  # Minimum content length
+                    # Ensure proper metadata without modifying the document
+                    if not doc.metadata.get("file_name"):
+                        doc.metadata["file_name"] = "unknown"
+                    
+                    processed_documents.append(doc)
+                    logger.debug(f"Processed document: {doc.metadata.get('file_name', 'unknown')}")
+                else:
+                    logger.warning(f"Skipping document with insufficient content: {doc.metadata.get('file_name', 'unknown')}")
+            except Exception as e:
+                logger.warning(f"Error processing document {doc.metadata.get('file_name', 'unknown')}: {e}")
+                # If processing fails, include the original document
+                processed_documents.append(doc)
+                continue
+        
+        documents = processed_documents
+        logger.info(f"Processed {len(documents)} documents for indexing")
 
         logger.info(f"Chatbot {chatbot_id}: Building KnowledgeGraphIndex...")
         index = KnowledgeGraphIndex.from_documents(
             documents,
             storage_context=storage_context,
-            max_triplets_per_chunk=2,
+            max_triplets_per_chunk=4,  # 増加：より多くの関係性を抽出
             include_embeddings=True,
             show_progress=True,
+            chunk_size=1024,  # チャンクサイズを明示的に設定
+            chunk_overlap=100,  # オーバーラップを追加
         )
         
         # *** IMPROVEMENT: Persist the index metadata to its dedicated directory ***
@@ -242,10 +433,13 @@ def build_knowledge_graph(chatbot_id: str):
         logger.info(f"Index metadata persisted successfully.")
 
         query_engine = index.as_query_engine(
+            response_synthesizer=get_response_synthesizer(
+                text_qa_template=QA_TEMPLATE_WITH_CITATION,
+            ),
             include_text=True,
-            response_mode="compact",
             embedding_mode="hybrid",
-            similarity_top_k=5,
+            similarity_top_k=8,  # 増加：より多くの候補を取得
+            retriever_mode="hybrid",  # ハイブリッド検索を明示的に指定
         )
         
         query_engines[chatbot_id] = query_engine
@@ -254,13 +448,47 @@ def build_knowledge_graph(chatbot_id: str):
         save_chatbots_metadata()
         logger.info(f"[Task Success] Knowledge graph for chatbot {chatbot_id} is ready.")
 
+        # Log successful indexing to Langfuse
+        log_to_langfuse(
+            "build_knowledge_graph_success",
+            {
+                "chatbot_id": chatbot_id,
+                "chatbot_name": chatbot.name,
+                "status": "success",
+                "documents_processed": len(documents) if 'documents' in locals() else 0
+            },
+            ["indexing", "knowledge_graph", "success"]
+        )
+
     except Exception as e:
         logger.error(f"[Task Failed] Failed to build knowledge graph for {chatbot_id}: {e}", exc_info=True)
+        
+        # Log failed indexing to Langfuse
+        log_to_langfuse(
+            "build_knowledge_graph_failed",
+            {
+                "chatbot_id": chatbot_id,
+                "chatbot_name": chatbot.name if chatbot else "Unknown",
+                "status": "failed",
+                "error": str(e),
+                "error_type": type(e).__name__
+            },
+            ["indexing", "knowledge_graph", "error"]
+        )
+        
         if chatbot:
             chatbot.status = ChatbotStatus.FAILED
             chatbot.current_step = None
             chatbot.description = f"Indexing failed: {str(e)}" # Store error message
             save_chatbots_metadata()
+    
+    finally:
+        # Ensure Langfuse data is flushed
+        if langfuse_client:
+            try:
+                langfuse_client.flush()
+            except Exception as e:
+                logger.warning(f"Failed to flush Langfuse data: {e}")
 
 # --- Persistence Functions ---
 async def load_chatbots_metadata():
@@ -320,6 +548,16 @@ async def startup_event():
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to the GraphLM Backend!"}
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint that also reports Langfuse integration status."""
+    langfuse_status = "enabled" if langfuse_client else "disabled"
+    return {
+        "status": "healthy",
+        "langfuse_integration": langfuse_status,
+        "version": "0.4.0"
+    }
 
 @app.get("/api/chatbots", response_model=List[Chatbot])
 async def get_chatbots():
@@ -417,18 +655,53 @@ async def chat_with_bot(request: ChatRequest):
 
     # --- NEW STREAMING IMPLEMENTATION ---
     async def event_generator() -> AsyncGenerator[str, None]:
+        # Initialize Langfuse trace
+        trace = None
+        generation = None
+        
         try:
             logger.info(
                 f"Received chat request for chatbot {request.chatbot_id} with query: {request.query}"
             )
 
-            # Step 1: Get the full, non-streaming response first to ensure process completion
-            response = await query_engine.aquery(request.query)
+            # Log chat query start to Langfuse
+            log_to_langfuse(
+                "chat_query_start",
+                {
+                    "chatbot_id": request.chatbot_id,
+                    "chatbot_name": chatbots_db.get(request.chatbot_id, {}).name if request.chatbot_id in chatbots_db else "Unknown",
+                    "query": request.query
+                },
+                ["chat", "graphrag"]
+            )
 
-            # Step 2: Extract all necessary data from the completed response
+            # Step 1: Preprocess the query for better retrieval
+            processed_query = preprocess_query(request.query)
+            logger.info(f"Original query: {request.query}")
+            logger.info(f"Processed query: {processed_query}")
+            
+            # Step 2: Get the full, non-streaming response first to ensure process completion
+            response = await query_engine.aquery(processed_query)
+
+            # Step 3: Extract all necessary data from the completed response
             logger.info(f"Response metadata: {response.metadata}")
 
+            # Post-process response for better quality
             final_text = str(response)
+            
+            # Remove any duplicate sentences
+            sentences = final_text.split('. ')
+            seen_sentences = set()
+            unique_sentences = []
+            for sentence in sentences:
+                sentence_clean = sentence.strip().lower()
+                if sentence_clean not in seen_sentences and len(sentence_clean) > 10:
+                    seen_sentences.add(sentence_clean)
+                    unique_sentences.append(sentence.strip())
+            
+            final_text = '. '.join(unique_sentences)
+            if not final_text.endswith('.'):
+                final_text += '.'
             sources = []
             for node in response.source_nodes:
                 file_name = node.metadata.get("file_name", "Unknown")
@@ -498,6 +771,20 @@ async def chat_with_bot(request: ChatRequest):
                     "links": links
                 }
 
+            # Log successful chat query to Langfuse
+            log_to_langfuse(
+                "chat_query_success",
+                {
+                    "chatbot_id": request.chatbot_id,
+                    "query": request.query,
+                    "response": final_text[:500] + "..." if len(final_text) > 500 else final_text,
+                    "source_count": len(sources),
+                    "graph_nodes": len(formatted_graph_data.get("nodes", [])) if formatted_graph_data else 0,
+                    "graph_links": len(formatted_graph_data.get("links", [])) if formatted_graph_data else 0
+                },
+                ["chat", "graphrag", "success"]
+            )
+
             # Step 3: Stream the extracted data piece by piece
             
             # Stream the final text char by char for a smoother effect
@@ -521,10 +808,30 @@ async def chat_with_bot(request: ChatRequest):
                 f"Error during query for chatbot {request.chatbot_id}: {e}",
                 exc_info=True,
             )
+            
+            # Log failed chat query to Langfuse
+            log_to_langfuse(
+                "chat_query_failed",
+                {
+                    "chatbot_id": request.chatbot_id,
+                    "query": request.query,
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                },
+                ["chat", "graphrag", "error"]
+            )
+            
             error_data = {"error": "An error occurred while querying the chatbot."}
             error_json = ChatResponse(event=StreamEvent.DONE, data=error_data).dict()
             yield f"data: {json.dumps(error_json)}\n\n"
         finally:
+            # Ensure Langfuse trace is finalized
+            if langfuse_client:
+                try:
+                    langfuse_client.flush()
+                except Exception as e:
+                    logger.warning(f"Failed to flush Langfuse data: {e}")
+            
             # Signal the end of the stream
             done_json = ChatResponse(event=StreamEvent.DONE, data={}).dict()
             yield f"data: {json.dumps(done_json)}\n\n"

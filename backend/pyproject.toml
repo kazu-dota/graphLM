@@ -18,6 +18,8 @@ dependencies = [
     "office365-rest-python-client", # For SharePoint integration
     "langfuse", # Added for LLM observability
     "openinference-instrumentation-llama-index",
+    "pymupdf", # For better PDF parsing
+    "llama-index-readers-file", # Explicit file readers
 ]
 requires-python = ">=3.9"
 

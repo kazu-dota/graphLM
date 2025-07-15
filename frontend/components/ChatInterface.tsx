@@ -19,6 +19,54 @@ interface ChatInterfaceProps {
   onSourceHover: (nodeId: string | null) => void; // New prop for hover events
 }
 
+const renderMessageText = (text: string, sources: any[]) => {
+  if (!text) return null;
+
+  const parts: React.ReactNode[] = [];
+  const citationRegex = /\(([^)]+\.(?:pdf|docx|txt|md))\)/g; // Matches (filename.ext)
+
+  let lastIndex = 0;
+  let match;
+
+  while ((match = citationRegex.exec(text)) !== null) {
+    const citationText = match[0]; // e.g., (document.pdf)
+    const filename = match[1];    // e.g., document.pdf
+
+    // Add text before the citation
+    if (match.index > lastIndex) {
+      parts.push(text.substring(lastIndex, match.index));
+    }
+
+    // Find the corresponding source
+    const source = sources.find(s => s.document_name === filename);
+
+    if (source && source.url) {
+      parts.push(
+        <Link
+          key={match.index}
+          href={`http://localhost:8000${source.url}#page=${source.page_number || 1}&search=${encodeURIComponent(source.snippet || '')}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          sx={{ textDecoration: 'underline', color: 'inherit' }}
+        >
+          {citationText}
+        </Link>
+      );
+    } else {
+      // If source not found, render as plain text
+      parts.push(citationText);
+    }
+    lastIndex = citationRegex.lastIndex;
+  }
+
+  // Add any remaining text after the last citation
+  if (lastIndex < text.length) {
+    parts.push(text.substring(lastIndex));
+  }
+
+  return <>{parts}</>;
+};
+
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus, onReferenceDataChange, onSourceHover }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -158,7 +206,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
                 }}
               >
                 <Typography variant="body1" sx={{ wordWrap: 'break-word' }}>
-                  {msg.text}
+                  {renderMessageText(msg.text, msg.sources)}
                   {msg.sender === 'bot' && msg.status === 'pending' && (
                     <CircularProgress size={16} sx={{ ml: 1 }} />
                   )}
@@ -171,7 +219,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
                     </Typography>
                     <List dense>
                       {msg.sources.filter(source => source.document_name && source.url).map((source, i) => (
-                        <Link href={`http://localhost:8000${source.url}`} target="_blank" rel="noopener noreferrer" key={i} sx={{ textDecoration: 'none', color: 'inherit' }}>
+                        <Link href={`http://localhost:8000${source.url}#page=${source.page_number || 1}&search=${encodeURIComponent(source.snippet || '')}`} target="_blank" rel="noopener noreferrer" key={i} sx={{ textDecoration: 'none', color: 'inherit' }}>
                           <ListItemButton
                             onMouseEnter={() => onSourceHover(source.document_name)}
                             onMouseLeave={() => onSourceHover(null)}
