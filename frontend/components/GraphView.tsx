@@ -1,17 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
-import { Box, useTheme, Modal, Paper, Typography } from '@mui/material';
+import { Box, useTheme, Modal, Paper, Typography, useMediaQuery } from '@mui/material';
+import { GraphData, GraphViewProps } from '../types';
 
-interface GraphData {
-  nodes: { id: any; [key: string]: any }[];
-  links: { source: any; target: any; [key: string]: any }[];
-}
-
-interface GraphViewProps {
-  graphData: GraphData | null;
-  highlightedNodes?: Set<string>;
-  selectedMessage?: any | null;
-}
+// Remove duplicate interface - using types from common types file
 
 // A more chic, modern color palette (based on Nord)
 const NODE_COLORS = [
@@ -36,14 +28,24 @@ const getNodeColor = (label: string) => {
 };
 
 
-const GraphView: React.FC<GraphViewProps> = ({ graphData, highlightedNodes: propHighlightedNodes = new Set(), selectedMessage = null }) => {
+const GraphView: React.FC<GraphViewProps> = ({ 
+  graphData, 
+  highlightedNodes: propHighlightedNodes = new Set(), 
+  selectedMessage = null,
+  width,
+  height
+}) => {
   const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isTablet = useMediaQuery(theme.breakpoints.down('md'));
   const graphRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [highlightNodes, setHighlightNodes] = useState(new Set());
   const [highlightLinks, setHighlightLinks] = useState(new Set());
   const [initialFitDone, setInitialFitDone] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedText, setSelectedText] = useState('');
+  const [dimensions, setDimensions] = useState({ width: width || 600, height: height || 400 });
 
   const handleOpenModal = (text: string) => {
     setSelectedText(text);
@@ -54,6 +56,28 @@ const GraphView: React.FC<GraphViewProps> = ({ graphData, highlightedNodes: prop
     setModalOpen(false);
     setSelectedText('');
   };
+
+  // Update dimensions when container size changes
+  useEffect(() => {
+    const updateDimensions = () => {
+      if (containerRef.current) {
+        const { offsetWidth, offsetHeight } = containerRef.current;
+        const newWidth = width || offsetWidth || (isMobile ? 300 : isTablet ? 500 : 600);
+        const newHeight = height || offsetHeight || (isMobile ? 250 : isTablet ? 350 : 400);
+        setDimensions({ width: newWidth, height: newHeight });
+      }
+    };
+
+    updateDimensions();
+    const resizeObserver = new ResizeObserver(updateDimensions);
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [width, height, isMobile, isTablet]);
 
   useEffect(() => {
     // When graph data changes, reset the initial fit flag
@@ -122,21 +146,33 @@ const GraphView: React.FC<GraphViewProps> = ({ graphData, highlightedNodes: prop
   }
 
   return (
-    <Box sx={{ width: '100%', height: '100%', position: 'relative' }}>
+    <Box 
+      ref={containerRef}
+      sx={{ 
+        width: '100%', 
+        height: '100%', 
+        position: 'relative',
+        overflow: 'hidden'
+      }}
+    >
       <ForceGraph2D
         ref={graphRef}
         graphData={graphData}
+        width={dimensions.width}
+        height={dimensions.height}
         nodeLabel={node => `<div><b>${node.label}</b></div>`}
         // Physics engine configuration for layout optimization
-        d3ForceManyBody={-300} // Increased repulsion strength
-        d3ForceLink={100} // Increased link distance
+        d3ForceManyBody={isMobile ? -150 : -300} // Reduced repulsion on mobile
+        d3ForceLink={isMobile ? 50 : 100} // Reduced link distance on mobile
         d3AlphaDecay={0.02} // Slower decay for more stable layout
         d3VelocityDecay={0.4} // Slower velocity decay
 
         // Node styling
         nodeCanvasObject={(node, ctx, globalScale) => {
           const label = node.label || node.id;
-          const fontSize = 14 / globalScale;
+          const baseFontSize = isMobile ? 12 : 14;
+          const fontSize = baseFontSize / globalScale;
+          const baseNodeSize = isMobile ? 6 : 8;
           const isNodeHighlighted = highlightNodes.has(node);
           const isPropHighlighted = propHighlightedNodes.has(node.id);
 
@@ -148,7 +184,7 @@ const GraphView: React.FC<GraphViewProps> = ({ graphData, highlightedNodes: prop
 
           // Draw circle
           ctx.beginPath();
-          ctx.arc(node.x!, node.y!, 5, 0, 2 * Math.PI, false);
+          ctx.arc(node.x!, node.y!, baseNodeSize, 0, 2 * Math.PI, false);
           ctx.fillStyle = (isNodeHighlighted || highlightNodes.size === 0) ? color : 'rgba(100, 100, 100, 0.5)';
           ctx.fill();
 
@@ -228,11 +264,14 @@ const GraphView: React.FC<GraphViewProps> = ({ graphData, highlightedNodes: prop
           top: '50%', 
           left: '50%', 
           transform: 'translate(-50%, -50%)',
-          width: 600,
+          width: { xs: '90vw', sm: '80vw', md: 600 },
+          maxWidth: '90vw',
+          maxHeight: '80vh',
           bgcolor: 'background.paper',
           border: '2px solid #000',
           boxShadow: 24,
-          p: 4,
+          p: { xs: 2, sm: 3, md: 4 },
+          overflow: 'auto'
         }}>
           <Typography id="source-text-modal-title" variant="h6" component="h2">
             Source Text

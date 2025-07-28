@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Box, Typography, TextField, Button, Paper, CircularProgress, List, ListItem, ListItemText, Divider, Grid, Card, CardContent, Link, ListItemButton } from '@mui/material';
 import { chatWithBot } from '../utils/api';
 import { ChatbotStatus, Message, Source, GraphData, StreamEvent, StreamData } from '../types';
@@ -10,7 +10,7 @@ interface ChatInterfaceProps {
   onSourceHover: (nodeId: string | null) => void;
 }
 
-const renderMessageText = (text: string, sources: Source[] = []) => {
+const renderMessageText = useMemo(() => (text: string, sources: Source[] = []) => {
   if (!text) return null;
 
   const parts: React.ReactNode[] = [];
@@ -56,7 +56,7 @@ const renderMessageText = (text: string, sources: Source[] = []) => {
   }
 
   return <>{parts}</>;
-};
+}, []);
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus, onReferenceDataChange, onSourceHover }) => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -75,7 +75,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
     onReferenceDataChange(null, null);
   }, [chatbotId]);
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!input.trim() || chatbotStatus !== ChatbotStatus.READY || loading) return;
 
     const userMessage: Message = {
@@ -161,16 +161,81 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
       ));
       setLoading(false);
     }
-  };
+  }, [input, chatbotStatus, loading, chatbotId]);
 
-  const handleSelectMessage = (message: Message) => {
+  const handleSelectMessage = useCallback((message: Message) => {
     if (message.sender === 'bot' && message.status === 'completed') { // Only select completed bot messages
       setSelectedMessage(message);
       onReferenceDataChange(message.graphData, message);
     }
-  };
+  }, [onReferenceDataChange]);
 
-  const isChatDisabled = chatbotStatus !== ChatbotStatus.READY;
+  const isChatDisabled = useMemo(() => chatbotStatus !== ChatbotStatus.READY, [chatbotStatus]);
+
+  const renderedMessages = useMemo(() => 
+    messages.map((msg) => (
+      <Box 
+        key={msg.id} 
+        sx={{ mb: 2, cursor: msg.sender === 'bot' && msg.status === 'completed' ? 'pointer' : 'default' }} 
+        onClick={() => handleSelectMessage(msg)}
+        role={msg.sender === 'bot' && msg.status === 'completed' ? 'button' : undefined}
+        tabIndex={msg.sender === 'bot' && msg.status === 'completed' ? 0 : undefined}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && msg.sender === 'bot' && msg.status === 'completed') {
+            handleSelectMessage(msg);
+          }
+        }}
+        aria-label={msg.sender === 'bot' && msg.status === 'completed' ? `View details for bot message: ${msg.content?.substring(0, 100)}...` : undefined}
+      >
+        <Paper
+          elevation={selectedMessage?.id === msg.id ? 4 : 1}
+          sx={{
+            p: 1.5,
+            display: 'inline-block',
+            minWidth: '10%',
+            maxWidth: '90%',
+            bgcolor: msg.sender === 'user' ? 'primary.dark' : 'background.paper',
+            border: '1px solid',
+            borderColor: selectedMessage?.id === msg.id ? 'primary.main' : 'divider',
+            boxShadow: selectedMessage?.id === msg.id ? '0px 0px 8px rgba(0, 0, 0, 0.2)' : 'none',
+            float: msg.sender === 'user' ? 'right' : 'left',
+            clear: 'both',
+          }}
+          role="article"
+          aria-label={`${msg.sender === 'user' ? 'User' : 'Bot'} message`}
+        >
+          <Typography variant="body1" sx={{ wordWrap: 'break-word' }}>
+            {renderMessageText(msg.content, msg.sources)}
+            {msg.sender === 'bot' && msg.status === 'pending' && (
+              <CircularProgress size={16} sx={{ ml: 1 }} />
+            )}
+          </Typography>
+          {msg.sender === 'bot' && msg.status === 'completed' && msg.sources && msg.sources.length > 0 && (
+            <Box sx={{ mt: 2 }}>
+              <Divider />
+              <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>
+                References:
+              </Typography>
+              <List dense>
+                {msg.sources.filter(source => source.filename && source.url).map((source, i) => (
+                  <Link href={`http://localhost:8000${source.url}#page=${source.page_number || 1}&search=${encodeURIComponent(source.snippet || '')}`} target="_blank" rel="noopener noreferrer" key={i} sx={{ textDecoration: 'none', color: 'inherit' }}>
+                    <ListItemButton
+                      onMouseEnter={() => onSourceHover(source.filename)}
+                      onMouseLeave={() => onSourceHover(null)}
+                    >
+                      <ListItemText
+                        primary={source.filename}
+                        secondary={`Page: ${source.page_number || 'N/A'}`}
+                      />
+                    </ListItemButton>
+                  </Link>
+                ))}
+              </List>
+            </Box>
+          )}
+        </Paper>
+      </Box>
+    )), [messages, selectedMessage, handleSelectMessage, renderMessageText, onSourceHover]);
 
   return (
     <Box sx={{ width: '100%', height: '100%' }}>
@@ -179,69 +244,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
           Conversation
         </Typography>
         <Box sx={{ flexGrow: 1, overflowY: 'auto', p: 2 }}>
-          {messages.map((msg) => (
-            <Box 
-              key={msg.id} 
-              sx={{ mb: 2, cursor: msg.sender === 'bot' && msg.status === 'completed' ? 'pointer' : 'default' }} 
-              onClick={() => handleSelectMessage(msg)}
-              role={msg.sender === 'bot' && msg.status === 'completed' ? 'button' : undefined}
-              tabIndex={msg.sender === 'bot' && msg.status === 'completed' ? 0 : undefined}
-              onKeyDown={(e) => {
-                if ((e.key === 'Enter' || e.key === ' ') && msg.sender === 'bot' && msg.status === 'completed') {
-                  handleSelectMessage(msg);
-                }
-              }}
-              aria-label={msg.sender === 'bot' && msg.status === 'completed' ? `View details for bot message: ${msg.content?.substring(0, 100)}...` : undefined}
-            >
-              <Paper
-                elevation={selectedMessage?.id === msg.id ? 4 : 1}
-                sx={{
-                  p: 1.5,
-                  display: 'inline-block',
-                  minWidth: '10%',
-                  maxWidth: '90%',
-                  bgcolor: msg.sender === 'user' ? 'primary.dark' : 'background.paper',
-                  border: '1px solid',
-                  borderColor: selectedMessage?.id === msg.id ? 'primary.main' : 'divider',
-                  boxShadow: selectedMessage?.id === msg.id ? '0px 0px 8px rgba(0, 0, 0, 0.2)' : 'none',
-                  float: msg.sender === 'user' ? 'right' : 'left',
-                  clear: 'both',
-                }}
-                role="article"
-                aria-label={`${msg.sender === 'user' ? 'User' : 'Bot'} message`}
-              >
-                <Typography variant="body1" sx={{ wordWrap: 'break-word' }}>
-                  {renderMessageText(msg.text, msg.sources)}
-                  {msg.sender === 'bot' && msg.status === 'pending' && (
-                    <CircularProgress size={16} sx={{ ml: 1 }} />
-                  )}
-                </Typography>
-                {msg.sender === 'bot' && msg.status === 'completed' && msg.sources && msg.sources.length > 0 && (
-                  <Box sx={{ mt: 2 }}>
-                    <Divider />
-                    <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>
-                      References:
-                    </Typography>
-                    <List dense>
-                      {msg.sources.filter(source => source.document_name && source.url).map((source, i) => (
-                        <Link href={`http://localhost:8000${source.url}#page=${source.page_number || 1}&search=${encodeURIComponent(source.snippet || '')}`} target="_blank" rel="noopener noreferrer" key={i} sx={{ textDecoration: 'none', color: 'inherit' }}>
-                          <ListItemButton
-                            onMouseEnter={() => onSourceHover(source.document_name)}
-                            onMouseLeave={() => onSourceHover(null)}
-                          >
-                            <ListItemText
-                              primary={source.document_name}
-                              secondary={`Page: ${source.page_number || 'N/A'}`}
-                            />
-                          </ListItemButton>
-                        </Link>
-                      ))}
-                    </List>
-                  </Box>
-                )}
-              </Paper>
-            </Box>
-          ))}
+          {renderedMessages}
           <div ref={messagesEndRef} />
         </Box>
         <Divider />
@@ -299,4 +302,4 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
   );
 };
 
-export default ChatInterface;
+export default React.memo(ChatInterface);
