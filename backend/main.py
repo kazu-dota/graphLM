@@ -1,8 +1,9 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, ValidationError
 import os
 import shutil
 from dotenv import load_dotenv
@@ -13,6 +14,8 @@ from enum import Enum
 import json
 import asyncio
 import nltk
+import time
+from functools import wraps
 
 from llama_index.core.chat_engine.types import StreamingAgentChatResponse
 
@@ -29,6 +32,20 @@ try:
 except ImportError:
     logger.warning("PDFReader not available, using default PDF parsing")
     PDFReader = None
+
+# Initialize logger first to avoid NameError
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("main")
+
+# Try to import Langfuse decorator for better integration
+try:
+    from langfuse.decorators import observe
+    langfuse_observe_available = True
+    logger.info("Langfuse observe decorator available")
+except ImportError:
+    langfuse_observe_available = False
+    logger.info("Langfuse observe decorator not available")
 from llama_index.core.callbacks import CallbackManager, CBEventType, EventPayload
 from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
@@ -37,9 +54,7 @@ from llama_index.graph_stores.neo4j import Neo4jGraphStore
 # Load environment variables
 load_dotenv()
 
-# --- Logging Setup ---
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("main") # Use a named logger
+# --- Additional Logging Setup ---
 # logging.getLogger('llama_index.core').setLevel(logging.DEBUG)
 
 # --- Constants ---
@@ -49,6 +64,17 @@ os.makedirs(UPLOAD_DIRECTORY, exist_ok=True)
 os.makedirs(STORAGE_DIRECTORY, exist_ok=True)
 CHATBOTS_METADATA_FILE = "./chatbots_metadata.json"
 
+# Security settings for file uploads
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB limit
+ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.md', '.docx', '.doc'}
+ALLOWED_MIME_TYPES = {
+    'application/pdf',
+    'text/plain',
+    'text/markdown',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/msword'
+}
+
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="GraphLM Backend",
@@ -56,15 +82,92 @@ app = FastAPI(
     version="0.4.0", # Version bump to reflect improvements
 )
 
+# Security improvement: Restrict CORS to specific origins
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",  # Frontend development
+    "http://127.0.0.1:3000",  # Alternative localhost
+]
+
+# Add production origins from environment variable if available
+if production_origins := os.getenv("ALLOWED_ORIGINS"):
+    ALLOWED_ORIGINS.extend(production_origins.split(","))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
 )
 
 app.mount("/files", StaticFiles(directory=UPLOAD_DIRECTORY), name="files")
+
+# Global exception handlers
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTP exceptions with detailed error messages."""
+    logger.error(f"HTTP {exc.status_code} error at {request.url}: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": "Request Error",
+            "message": exc.detail,
+            "status_code": exc.status_code,
+            "timestamp": time.time()
+        }
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle request validation errors with user-friendly messages."""
+    logger.error(f"Validation error at {request.url}: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "Validation Error",
+            "message": "Invalid request data provided",
+            "details": exc.errors(),
+            "timestamp": time.time()
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle unexpected errors with generic error message."""
+    logger.error(f"Unexpected error at {request.url}: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error",
+            "message": "An unexpected error occurred. Please try again later.",
+            "timestamp": time.time()
+        }
+    )
+
+# Retry decorator for database operations
+def retry_on_failure(max_attempts: int = 3, delay: float = 1.0):
+    """Decorator to retry functions on failure with exponential backoff."""
+    def decorator(func):
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_attempts):
+                try:
+                    if asyncio.iscoroutinefunction(func):
+                        return await func(*args, **kwargs)
+                    else:
+                        return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_attempts - 1:
+                        wait_time = delay * (2 ** attempt)  # Exponential backoff
+                        logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                    else:
+                        logger.error(f"All {max_attempts} attempts failed: {e}")
+            raise last_exception
+        return async_wrapper
+    return decorator
 
 # --- Status Enums & API Models (No changes) ---
 class ChatbotStatus(str, Enum):
@@ -186,20 +289,114 @@ if all([LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST]):
 else:
     logger.warning("Langfuse environment variables not fully set. Skipping Langfuse integration.")
 
+# Security utility functions
+def validate_uploaded_file(file: UploadFile) -> None:
+    """Validate uploaded file for security and size constraints."""
+    # Check file size
+    if hasattr(file, 'size') and file.size and file.size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size allowed: {MAX_FILE_SIZE // (1024 * 1024)}MB"
+        )
+    
+    # Check file extension
+    if file.filename:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=415,
+                detail=f"File type not supported. Allowed extensions: {', '.join(ALLOWED_EXTENSIONS)}"
+            )
+    
+    # Check MIME type
+    if file.content_type and file.content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail=f"MIME type not supported. File type: {file.content_type}"
+        )
+
+def sanitize_filename(filename: str) -> str:
+    """Sanitize filename to prevent directory traversal attacks."""
+    import re
+    # Remove any path separators and keep only alphanumeric, dots, hyphens, underscores
+    sanitized = re.sub(r'[^\w\-_\.]', '_', filename)
+    # Prevent hidden files and relative paths
+    sanitized = sanitized.lstrip('.')
+    return sanitized or 'uploaded_file'
+
 # Utility function to log events to Langfuse
 def log_to_langfuse(event_name: str, metadata: dict, tags: list = None):
-    """Utility function to safely log events to Langfuse."""
+    """Utility function to safely log events to Langfuse using the correct API."""
     if langfuse_client:
-        # For now, use basic logging until we confirm the correct Langfuse API
-        logger.info(f"Langfuse event: {event_name}")
-        logger.info(f"Metadata: {metadata}")
-        logger.info(f"Tags: {tags}")
-        
-        # Also try to flush the client to ensure connection works
         try:
-            langfuse_client.flush()
+            # Debug: Print available methods on first call
+            available_methods = [method for method in dir(langfuse_client) if not method.startswith('_')]
+            logger.debug(f"Available Langfuse methods: {available_methods}")
+            
+            # Use the correct create_event method
+            if hasattr(langfuse_client, 'create_event'):
+                try:
+                    # Add tags to metadata if provided
+                    enhanced_metadata = metadata.copy()
+                    if tags:
+                        enhanced_metadata['tags'] = tags
+                    
+                    # For chat queries, try to create a more structured trace
+                    if 'query' in metadata and 'response' in metadata:
+                        # Create a trace for the conversation
+                        trace_id = langfuse_client.create_trace_id()
+                        
+                        # Create the event within the trace
+                        langfuse_client.create_event(
+                            name=event_name,
+                            metadata=enhanced_metadata,
+                            trace_id=trace_id
+                        )
+                        
+                        # Try to create a generation if methods are available
+                        if hasattr(langfuse_client, 'start_generation'):
+                            try:
+                                generation = langfuse_client.start_generation(
+                                    name=f"{event_name}_generation",
+                                    input=metadata.get('query', ''),
+                                    metadata=enhanced_metadata
+                                )
+                                
+                                # Update with output
+                                if hasattr(langfuse_client, 'update_current_generation'):
+                                    langfuse_client.update_current_generation(
+                                        output=metadata.get('response', ''),
+                                        metadata=enhanced_metadata
+                                    )
+                                
+                                logger.debug(f"Langfuse generation created for: {event_name}")
+                            except Exception as gen_error:
+                                logger.debug(f"Generation creation failed: {gen_error}")
+                    else:
+                        # Simple event for non-chat events
+                        langfuse_client.create_event(
+                            name=event_name,
+                            metadata=enhanced_metadata
+                        )
+                    
+                    logger.debug(f"Langfuse event logged via create_event: {event_name}")
+                    
+                except Exception as e:
+                    logger.warning(f"create_event failed: {e}")
+                    # Fallback to basic logging
+                    logger.info(f"Langfuse event (create_event failed): {event_name}")
+                    logger.debug(f"Metadata: {metadata}")
+            else:
+                logger.warning(f"create_event method not available. Available methods: {available_methods}")
+                # Fallback to basic logging
+                logger.info(f"Langfuse event (method not available): {event_name}")
+                logger.debug(f"Metadata: {metadata}")
+            
         except Exception as e:
-            logger.debug(f"Langfuse flush error: {e}")
+            logger.warning(f"Failed to log to Langfuse: {e}")
+            # Fallback to basic logging
+            logger.info(f"Langfuse event (fallback): {event_name}")
+            logger.debug(f"Metadata: {metadata}")
     else:
         logger.debug(f"Langfuse client not available for event: {event_name}")
 
@@ -487,6 +684,7 @@ def build_knowledge_graph(chatbot_id: str):
         if langfuse_client:
             try:
                 langfuse_client.flush()
+                logger.debug("Langfuse data flushed successfully")
             except Exception as e:
                 logger.warning(f"Failed to flush Langfuse data: {e}")
 
@@ -559,6 +757,45 @@ async def health_check():
         "version": "0.4.0"
     }
 
+@app.post("/test-langfuse")
+async def test_langfuse():
+    """Test endpoint to verify Langfuse integration."""
+    if not langfuse_client:
+        return {"status": "error", "message": "Langfuse client not initialized"}
+    
+    try:
+        # Get available methods for debugging
+        available_methods = [method for method in dir(langfuse_client) if not method.startswith('_')]
+        
+        # Test logging to Langfuse
+        log_to_langfuse(
+            "test_event",
+            {
+                "test": True,
+                "timestamp": "2024-01-01T00:00:00Z",
+                "query": "test query",
+                "response": "test response"
+            },
+            ["test", "api"]
+        )
+        
+        # Force flush to ensure data is sent
+        if hasattr(langfuse_client, 'flush'):
+            langfuse_client.flush()
+        
+        return {
+            "status": "success",
+            "message": "Langfuse test event sent successfully",
+            "available_methods": available_methods,
+            "langfuse_version": getattr(langfuse_client, '__version__', 'unknown')
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Langfuse test failed: {str(e)}",
+            "available_methods": available_methods if 'available_methods' in locals() else []
+        }
+
 @app.get("/api/chatbots", response_model=List[Chatbot])
 async def get_chatbots():
     return list(chatbots_db.values())
@@ -620,16 +857,44 @@ async def create_chatbot(name: str = Form(...), description: Optional[str] = For
 # The rest of the API endpoints remain unchanged...
 @app.post("/api/chatbots/{chatbot_id}/upload", status_code=202)
 async def upload_knowledge_source(chatbot_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
-    if chatbot_id not in chatbots_db: raise HTTPException(status_code=404, detail="Chatbot not found")
+    # Validate chatbot exists
+    if chatbot_id not in chatbots_db: 
+        raise HTTPException(status_code=404, detail="Chatbot not found")
+    
+    # Validate uploaded file
+    validate_uploaded_file(file)
+    
+    # Create chatbot directory
     chatbot_dir = os.path.join(UPLOAD_DIRECTORY, chatbot_id)
     os.makedirs(chatbot_dir, exist_ok=True)
-    file_path = os.path.join(chatbot_dir, file.filename)
+    
+    # Sanitize filename and create safe file path
+    safe_filename = sanitize_filename(file.filename or "uploaded_file")
+    file_path = os.path.join(chatbot_dir, safe_filename)
+    
     try:
-        with open(file_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
+        # Save file securely
+        with open(file_path, "wb") as buffer: 
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Start background processing
         background_tasks.add_task(build_knowledge_graph, chatbot_id)
+        
+        logger.info(f"File uploaded successfully: {safe_filename} for chatbot {chatbot_id}")
+        
+    except Exception as e:
+        logger.error(f"File upload failed for chatbot {chatbot_id}: {e}")
+        # Clean up partial file if it exists
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=500, detail="File upload failed")
     finally:
         file.file.close()
-    return {"message": f"File processing started for chatbot '{chatbots_db[chatbot_id].name}'."}
+    
+    return {
+        "message": f"File '{safe_filename}' processing started for chatbot '{chatbots_db[chatbot_id].name}'.",
+        "filename": safe_filename
+    }
 
 @app.get("/api/chatbots/{chatbot_id}/indexing_progress", response_model=IndexingProgressResponse)
 async def get_indexing_progress(chatbot_id: str):
@@ -670,9 +935,10 @@ async def chat_with_bot(request: ChatRequest):
                 {
                     "chatbot_id": request.chatbot_id,
                     "chatbot_name": chatbots_db.get(request.chatbot_id, {}).name if request.chatbot_id in chatbots_db else "Unknown",
-                    "query": request.query
+                    "query": request.query,
+                    "status": "started"
                 },
-                ["chat", "graphrag"]
+                ["chat", "graphrag", "start"]
             )
 
             # Step 1: Preprocess the query for better retrieval
@@ -780,7 +1046,8 @@ async def chat_with_bot(request: ChatRequest):
                     "response": final_text[:500] + "..." if len(final_text) > 500 else final_text,
                     "source_count": len(sources),
                     "graph_nodes": len(formatted_graph_data.get("nodes", [])) if formatted_graph_data else 0,
-                    "graph_links": len(formatted_graph_data.get("links", [])) if formatted_graph_data else 0
+                    "graph_links": len(formatted_graph_data.get("links", [])) if formatted_graph_data else 0,
+                    "status": "success"
                 },
                 ["chat", "graphrag", "success"]
             )
@@ -816,7 +1083,8 @@ async def chat_with_bot(request: ChatRequest):
                     "chatbot_id": request.chatbot_id,
                     "query": request.query,
                     "error": str(e),
-                    "error_type": type(e).__name__
+                    "error_type": type(e).__name__,
+                    "status": "failed"
                 },
                 ["chat", "graphrag", "error"]
             )
@@ -829,6 +1097,7 @@ async def chat_with_bot(request: ChatRequest):
             if langfuse_client:
                 try:
                     langfuse_client.flush()
+                    logger.debug("Langfuse data flushed successfully")
                 except Exception as e:
                     logger.warning(f"Failed to flush Langfuse data: {e}")
             

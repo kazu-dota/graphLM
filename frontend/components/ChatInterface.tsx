@@ -1,25 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Typography, TextField, Button, Paper, CircularProgress, List, ListItem, ListItemText, Divider, Grid, Card, CardContent, Link, ListItemButton } from '@mui/material';
 import { chatWithBot } from '../utils/api';
-import { ChatbotStatus } from './ChatbotList';
-
-interface Message {
-  id: number;
-  sender: 'user' | 'bot';
-  text: string;
-  sources?: any[];
-  graphData?: any;
-  status?: 'pending' | 'completed' | 'error'; // Add status property
-}
+import { ChatbotStatus, Message, Source, GraphData, StreamEvent, StreamData } from '../types';
 
 interface ChatInterfaceProps {
   chatbotId: string;
   chatbotStatus: ChatbotStatus;
-  onReferenceDataChange: (graphData: any, message: Message | null) => void;
-  onSourceHover: (nodeId: string | null) => void; // New prop for hover events
+  onReferenceDataChange: (graphData: GraphData | null, message: Message | null) => void;
+  onSourceHover: (nodeId: string | null) => void;
 }
 
-const renderMessageText = (text: string, sources: any[]) => {
+const renderMessageText = (text: string, sources: Source[] = []) => {
   if (!text) return null;
 
   const parts: React.ReactNode[] = [];
@@ -38,7 +29,7 @@ const renderMessageText = (text: string, sources: any[]) => {
     }
 
     // Find the corresponding source
-    const source = sources.find(s => s.document_name === filename);
+    const source = sources.find(s => s.filename === filename);
 
     if (source && source.url) {
       parts.push(
@@ -69,8 +60,8 @@ const renderMessageText = (text: string, sources: any[]) => {
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus, onReferenceDataChange, onSourceHover }) => {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [input, setInput] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -189,7 +180,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
         </Typography>
         <Box sx={{ flexGrow: 1, overflowY: 'auto', p: 2 }}>
           {messages.map((msg) => (
-            <Box key={msg.id} sx={{ mb: 2, cursor: msg.sender === 'bot' && msg.status === 'completed' ? 'pointer' : 'default' }} onClick={() => handleSelectMessage(msg)}>
+            <Box 
+              key={msg.id} 
+              sx={{ mb: 2, cursor: msg.sender === 'bot' && msg.status === 'completed' ? 'pointer' : 'default' }} 
+              onClick={() => handleSelectMessage(msg)}
+              role={msg.sender === 'bot' && msg.status === 'completed' ? 'button' : undefined}
+              tabIndex={msg.sender === 'bot' && msg.status === 'completed' ? 0 : undefined}
+              onKeyDown={(e) => {
+                if ((e.key === 'Enter' || e.key === ' ') && msg.sender === 'bot' && msg.status === 'completed') {
+                  handleSelectMessage(msg);
+                }
+              }}
+              aria-label={msg.sender === 'bot' && msg.status === 'completed' ? `View details for bot message: ${msg.content?.substring(0, 100)}...` : undefined}
+            >
               <Paper
                 elevation={selectedMessage?.id === msg.id ? 4 : 1}
                 sx={{
@@ -204,6 +207,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
                   float: msg.sender === 'user' ? 'right' : 'left',
                   clear: 'both',
                 }}
+                role="article"
+                aria-label={`${msg.sender === 'user' ? 'User' : 'Bot'} message`}
               >
                 <Typography variant="body1" sx={{ wordWrap: 'break-word' }}>
                   {renderMessageText(msg.text, msg.sources)}
@@ -240,7 +245,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
           <div ref={messagesEndRef} />
         </Box>
         <Divider />
-        <Box sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 1 }} role="form" aria-label="Chat input form">
           <TextField
             fullWidth
             variant="outlined"
@@ -256,9 +261,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ chatbotId, chatbotStatus,
             disabled={isChatDisabled || loading}
             multiline
             rows={3}
+            aria-label="Type your message to the chatbot"
+            aria-describedby="chat-input-help"
           />
+          <Typography 
+            id="chat-input-help" 
+            variant="caption" 
+            sx={{ display: 'none' }}
+          >
+            Press Enter to send your message, or Shift+Enter for a new line
+          </Typography>
           <Box sx={{ position: 'relative' }}>
-            <Button variant="contained" onClick={handleSend} disabled={isChatDisabled || loading}>
+            <Button 
+              variant="contained" 
+              onClick={handleSend} 
+              disabled={isChatDisabled || loading}
+              aria-label={loading ? "Sending message..." : "Send message"}
+            >
               Send
             </Button>
             {loading && (
